@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/login_response.dart';
+import 'login_page.dart';
 
 class ResponsePage extends StatelessWidget {
   static const routeName = '/response';
@@ -17,7 +18,11 @@ class ResponsePage extends StatelessWidget {
             tooltip: 'Logout',
             icon: const Icon(Icons.logout),
             onPressed: () {
-              Navigator.of(context).pop(); // back to login
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(
+                  builder: (_) => const LoginPage(),
+                ),
+              );
             },
           ),
         ],
