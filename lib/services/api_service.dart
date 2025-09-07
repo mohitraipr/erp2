@@ -17,6 +17,7 @@ class ApiException implements Exception {
 class ApiService {
   static const String _baseUrl = 'https://aurora-anthologies.com';
   final http.Client _client;
+  String? _sessionCookie;
   ApiService({http.Client? client}) : _client = client ?? http.Client();
 
   /// Set [sendAsForm] = true if your endpoint expects x-www-form-urlencoded.
@@ -49,6 +50,10 @@ class ApiService {
 
       // ----- Success path: must have BOTH fields -----
       if (status >= 200 && status < 300) {
+        final rawCookie = res.headers['set-cookie'];
+        if (rawCookie != null && rawCookie.isNotEmpty) {
+          _sessionCookie = rawCookie.split(';').first;
+        }
         if (json != null &&
             json['username'] is String &&
             json['role'] is String) {
@@ -94,8 +99,13 @@ class ApiService {
   Future<Map<String, List<FabricRoll>>> fetchFabricRolls() async {
     final uri = Uri.parse('$_baseUrl/api/fabric-rolls');
     try {
-      final res =
-          await _client.get(uri).timeout(const Duration(seconds: 20));
+      final headers = <String, String>{};
+      if (_sessionCookie != null) {
+        headers['Cookie'] = _sessionCookie!;
+      }
+      final res = await _client
+          .get(uri, headers: headers)
+          .timeout(const Duration(seconds: 20));
 
       final status = res.statusCode;
       final raw = _safeDecodeUtf8(res.bodyBytes);
