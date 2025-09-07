@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 import '../models/login_response.dart';
+import '../models/fabric_roll.dart';
 
 class ApiException implements Exception {
   final String message;
@@ -71,6 +72,44 @@ class ApiService {
       final msg =
           _extractMessage(json, raw) ??
           'Server error ($status). Please try again.';
+      throw ApiException(msg);
+    } on TimeoutException {
+      throw ApiException('Request timed out. Check your connection.');
+    } on SocketException {
+      throw ApiException('No internet connection.');
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      throw ApiException('Unexpected error: $e');
+    }
+  }
+
+  Future<Map<String, List<FabricRoll>>> fetchFabricRolls() async {
+    final uri = Uri.parse('$_baseUrl/api/fabric-rolls');
+    try {
+      final res =
+          await _client.get(uri).timeout(const Duration(seconds: 20));
+
+      final status = res.statusCode;
+      final raw = _safeDecodeUtf8(res.bodyBytes);
+      final Map<String, dynamic>? json = _tryParseJson(raw);
+
+      if (status >= 200 && status < 300 && json != null) {
+        final Map<String, List<FabricRoll>> data = {};
+        json.forEach((key, value) {
+          if (value is List) {
+            data[key] = value
+                .whereType<Map>()
+                .map((e) =>
+                    FabricRoll.fromJson(Map<String, dynamic>.from(e)))
+                .toList();
+          }
+        });
+        return data;
+      }
+
+      final msg = _extractMessage(json, raw) ??
+          'Failed to fetch fabric rolls.';
       throw ApiException(msg);
     } on TimeoutException {
       throw ApiException('Request timed out. Check your connection.');

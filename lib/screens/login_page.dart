@@ -20,7 +20,6 @@ class _LoginPageState extends State<LoginPage> {
   void dispose() {
     _usernameCtrl.dispose();
     _passwordCtrl.dispose();
-    _api.dispose();
     super.dispose();
   }
 
@@ -40,9 +39,14 @@ class _LoginPageState extends State<LoginPage> {
       );
 
       if (!mounted) return;
-      Navigator.of(
-        context,
-      ).pushReplacementNamed(ResponsePage.routeName, arguments: data);
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => ResponsePage(
+            data: data,
+            api: _api,
+          ),
+        ),
+      );
     } on ApiException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
