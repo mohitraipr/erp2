@@ -14,11 +14,20 @@ class ResponsePage extends StatefulWidget {
   State<ResponsePage> createState() => _ResponsePageState();
 }
 
+class RollSelection {
+  final FabricRoll roll;
+  final TextEditingController weightCtrl = TextEditingController();
+  RollSelection(this.roll);
+
+  void dispose() => weightCtrl.dispose();
+}
+
 class _ResponsePageState extends State<ResponsePage> {
   Map<String, List<FabricRoll>> _rollsByType = {};
   String? _selectedFabric;
-  final Set<String> _selectedRolls = {};
-  final TextEditingController _searchCtrl = TextEditingController();
+  final List<RollSelection> _selectedRolls = [];
+  TextEditingController? _fabricCtrl;
+  TextEditingController? _rollCtrl;
   bool _loading = true;
   String? _error;
 
@@ -32,7 +41,6 @@ class _ResponsePageState extends State<ResponsePage> {
     super.initState();
     if (_isCuttingManager) {
       _loadRolls();
-      _searchCtrl.addListener(() => setState(() {}));
     } else {
       _loading = false;
     }
@@ -53,16 +61,13 @@ class _ResponsePageState extends State<ResponsePage> {
     }
   }
 
-  List<String> get _filteredTypes {
-    final q = _searchCtrl.text.toLowerCase();
-    final types = _rollsByType.keys.toList()..sort();
-    if (q.isEmpty) return types;
-    return types.where((t) => t.toLowerCase().contains(q)).toList();
-  }
-
   @override
   void dispose() {
-    _searchCtrl.dispose();
+    _fabricCtrl?.dispose();
+    _rollCtrl?.dispose();
+    for (final r in _selectedRolls) {
+      r.dispose();
+    }
     widget.api.dispose();
     super.dispose();
   }
@@ -101,56 +106,112 @@ class _ResponsePageState extends State<ResponsePage> {
             style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 16),
-          TextField(
-            controller: _searchCtrl,
-            decoration: const InputDecoration(
-              labelText: 'Search fabric type',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          DropdownButton<String>(
-            isExpanded: true,
-            hint: const Text('Select fabric type'),
-            value: _filteredTypes.contains(_selectedFabric)
-                ? _selectedFabric
-                : null,
-            items: _filteredTypes
-                .map((t) => DropdownMenuItem(value: t, child: Text(t)))
-                .toList(),
-            onChanged: (v) {
+          Autocomplete<String>(
+            optionsBuilder: (TextEditingValue textEditingValue) {
+              final q = textEditingValue.text.toLowerCase();
+              final types = _rollsByType.keys.toList()..sort();
+              if (q.isEmpty) return types;
+              return types.where((t) => t.toLowerCase().contains(q));
+            },
+            fieldViewBuilder:
+                (context, controller, focusNode, onFieldSubmitted) {
+              _fabricCtrl ??= controller;
+              return TextField(
+                controller: controller,
+                focusNode: focusNode,
+                decoration: const InputDecoration(
+                  labelText: 'Search fabric type',
+                  border: OutlineInputBorder(),
+                ),
+              );
+            },
+            onSelected: (v) {
               setState(() {
                 _selectedFabric = v;
+                for (final r in _selectedRolls) {
+                  r.dispose();
+                }
                 _selectedRolls.clear();
+                _rollCtrl?.clear();
               });
             },
           ),
           const SizedBox(height: 16),
-          if (_selectedFabric != null)
+          if (_selectedFabric != null) ...[
+            Autocomplete<FabricRoll>(
+              displayStringForOption: (r) => r.rollNo,
+              optionsBuilder: (TextEditingValue textEditingValue) {
+                final q = textEditingValue.text.toLowerCase();
+                final rolls = _rollsByType[_selectedFabric]!;
+                if (q.isEmpty) return rolls;
+                return rolls
+                    .where((r) => r.rollNo.toLowerCase().contains(q))
+                    .toList();
+              },
+              fieldViewBuilder:
+                  (context, controller, focusNode, onFieldSubmitted) {
+                _rollCtrl ??= controller;
+                return TextField(
+                  controller: controller,
+                  focusNode: focusNode,
+                  decoration: const InputDecoration(
+                    labelText: 'Search roll number',
+                    border: OutlineInputBorder(),
+                  ),
+                );
+              },
+              onSelected: (r) {
+                setState(() {
+                  if (_selectedRolls
+                      .any((sel) => sel.roll.rollNo == r.rollNo)) return;
+                  _selectedRolls.add(RollSelection(r));
+                  _rollCtrl?.clear();
+                });
+              },
+            ),
+            const SizedBox(height: 16),
             Expanded(
-              child: ListView(
-                children: _rollsByType[_selectedFabric]!
-                    .map(
-                      (r) => CheckboxListTile(
-                        title: Text(
-                          'Roll ${r.rollNo} (${r.perRollWeight} ${r.unit})',
-                        ),
-                        subtitle: Text(r.vendorName),
-                        value: _selectedRolls.contains(r.rollNo),
-                        onChanged: (checked) {
-                          setState(() {
-                            if (checked == true) {
-                              _selectedRolls.add(r.rollNo);
-                            } else {
-                              _selectedRolls.remove(r.rollNo);
-                            }
-                          });
-                        },
+              child: ListView.builder(
+                itemCount: _selectedRolls.length,
+                itemBuilder: (context, index) {
+                  final sel = _selectedRolls[index];
+                  return ListTile(
+                    title: Text(
+                      'Roll ${sel.roll.rollNo} (${sel.roll.perRollWeight} ${sel.roll.unit})',
+                    ),
+                    subtitle: TextField(
+                      controller: sel.weightCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Weight to use',
+                        border: OutlineInputBorder(),
                       ),
-                    )
-                    .toList(),
+                      onChanged: (v) {
+                        final w = double.tryParse(v) ?? 0;
+                        if (w > sel.roll.perRollWeight) {
+                          sel.weightCtrl.text =
+                              sel.roll.perRollWeight.toString();
+                          sel.weightCtrl.selection = TextSelection.fromPosition(
+                            TextPosition(offset: sel.weightCtrl.text.length),
+                          );
+                        }
+                      },
+                    ),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: () {
+                        setState(() {
+                          sel.dispose();
+                          _selectedRolls.removeAt(index);
+                        });
+                      },
+                    ),
+                  );
+                },
               ),
             ),
+          ],
         ],
       );
     }
