@@ -12,10 +12,20 @@ class FabricRoll {
   });
 
   factory FabricRoll.fromJson(Map<String, dynamic> json) {
+    final dynamic rawWeight = json['per_roll_weight'];
+    final double parsedWeight;
+    if (rawWeight is num) {
+      parsedWeight = rawWeight.toDouble();
+    } else if (rawWeight is String) {
+      parsedWeight = double.tryParse(rawWeight) ?? 0.0;
+    } else {
+      parsedWeight = 0.0;
+    }
+
     return FabricRoll(
       rollNo: json['roll_no'] as String,
       unit: json['unit'] as String,
-      perRollWeight: (json['per_roll_weight'] as num).toDouble(),
+      perRollWeight: parsedWeight,
       vendorName: json['vendor_name'] as String,
     );
   }
