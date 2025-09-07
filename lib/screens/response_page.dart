@@ -63,8 +63,9 @@ class _ResponsePageState extends State<ResponsePage> {
 
   @override
   void dispose() {
-    _fabricCtrl?.dispose();
-    _rollCtrl?.dispose();
+    // The controllers provided by the Autocomplete widgets are managed
+    // internally by Flutter, so we should not dispose them ourselves.
+    // Only dispose the controllers we explicitly created.
     for (final r in _selectedRolls) {
       r.dispose();
     }
@@ -171,42 +172,87 @@ class _ResponsePageState extends State<ResponsePage> {
               },
             ),
             const SizedBox(height: 16),
+            Text(
+              'Selected Rolls',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
             Expanded(
-              child: ListView.builder(
+              child: ListView.separated(
                 itemCount: _selectedRolls.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
                 itemBuilder: (context, index) {
                   final sel = _selectedRolls[index];
-                  return ListTile(
-                    title: Text(
-                      'Roll ${sel.roll.rollNo} (${sel.roll.perRollWeight} ${sel.roll.unit})',
-                    ),
-                    subtitle: TextField(
-                      controller: sel.weightCtrl,
-                      keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true),
-                      decoration: const InputDecoration(
-                        labelText: 'Weight to use',
-                        border: OutlineInputBorder(),
+                  return Card(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      side: BorderSide(
+                        color: Theme.of(context).colorScheme.primary,
                       ),
-                      onChanged: (v) {
-                        final w = double.tryParse(v) ?? 0;
-                        if (w > sel.roll.perRollWeight) {
-                          sel.weightCtrl.text =
-                              sel.roll.perRollWeight.toString();
-                          sel.weightCtrl.selection = TextSelection.fromPosition(
-                            TextPosition(offset: sel.weightCtrl.text.length),
-                          );
-                        }
-                      },
                     ),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.clear),
-                      onPressed: () {
-                        setState(() {
-                          sel.dispose();
-                          _selectedRolls.removeAt(index);
-                        });
-                      },
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Roll ${sel.roll.rollNo}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Available: ${sel.roll.perRollWeight} ${sel.roll.unit}',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodySmall,
+                                ),
+                              ],
+                            ),
+                          ),
+                          SizedBox(
+                            width: 120,
+                            child: TextField(
+                              controller: sel.weightCtrl,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                      decimal: true),
+                              decoration: const InputDecoration(
+                                labelText: 'Weight',
+                                isDense: true,
+                                border: OutlineInputBorder(),
+                              ),
+                              onChanged: (v) {
+                                final w = double.tryParse(v) ?? 0;
+                                if (w > sel.roll.perRollWeight) {
+                                  sel.weightCtrl.text =
+                                      sel.roll.perRollWeight.toString();
+                                  sel.weightCtrl.selection =
+                                      TextSelection.fromPosition(
+                                    TextPosition(
+                                        offset: sel.weightCtrl.text.length),
+                                  );
+                                }
+                              },
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Remove roll',
+                            icon: const Icon(Icons.clear),
+                            onPressed: () {
+                              setState(() {
+                                sel.dispose();
+                                _selectedRolls.removeAt(index);
+                              });
+                            },
+                          ),
+                        ],
+                      ),
                     ),
                   );
                 },
