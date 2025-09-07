@@ -22,11 +22,18 @@ class _ResponsePageState extends State<ResponsePage> {
   bool _loading = true;
   String? _error;
 
+  bool get _isCuttingManager =>
+      widget.data.role.toLowerCase() == 'cutting manager';
+
   @override
   void initState() {
     super.initState();
-    _loadRolls();
-    _searchCtrl.addListener(() => setState(() {}));
+    if (_isCuttingManager) {
+      _loadRolls();
+      _searchCtrl.addListener(() => setState(() {}));
+    } else {
+      _loading = false;
+    }
   }
 
   Future<void> _loadRolls() async {
@@ -66,7 +73,22 @@ class _ResponsePageState extends State<ResponsePage> {
   @override
   Widget build(BuildContext context) {
     Widget content;
-    if (_loading) {
+    if (!_isCuttingManager) {
+      content = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Hello, ${widget.data.username}',
+            style: const TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text('Role: ${widget.data.role}'),
+        ],
+      );
+    } else if (_loading) {
       content = const Center(child: CircularProgressIndicator());
     } else if (_error != null) {
       content = Center(child: Text(_error!));
