@@ -22,8 +22,10 @@ class _ResponsePageState extends State<ResponsePage> {
   bool _loading = true;
   String? _error;
 
-  bool get _isCuttingManager =>
-      widget.data.role.toLowerCase() == 'cutting manager';
+  bool get _isCuttingManager {
+    final role = widget.data.role.toLowerCase().replaceAll('_', ' ');
+    return role == 'cutting manager';
+  }
 
   @override
   void initState() {
