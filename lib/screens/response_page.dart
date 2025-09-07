@@ -67,9 +67,9 @@ class _ResponsePageState extends State<ResponsePage> {
   }
 
   void _logout() {
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const LoginPage()),
-    );
+    Navigator.of(
+      context,
+    ).pushReplacement(MaterialPageRoute(builder: (_) => const LoginPage()));
   }
 
   @override
@@ -81,10 +81,7 @@ class _ResponsePageState extends State<ResponsePage> {
         children: [
           Text(
             'Hello, ${widget.data.username}',
-            style: const TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.w600,
-            ),
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
           Text('Role: ${widget.data.role}'),
@@ -100,10 +97,7 @@ class _ResponsePageState extends State<ResponsePage> {
         children: [
           Text(
             'Hello, ${widget.data.username}',
-            style: const TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.w600,
-            ),
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 16),
           TextField(
@@ -121,12 +115,7 @@ class _ResponsePageState extends State<ResponsePage> {
                 ? _selectedFabric
                 : null,
             items: _filteredTypes
-                .map(
-                  (t) => DropdownMenuItem(
-                    value: t,
-                    child: Text(t),
-                  ),
-                )
+                .map((t) => DropdownMenuItem(value: t, child: Text(t)))
                 .toList(),
             onChanged: (v) {
               setState(() {
@@ -143,7 +132,8 @@ class _ResponsePageState extends State<ResponsePage> {
                     .map(
                       (r) => CheckboxListTile(
                         title: Text(
-                            'Roll ${r.rollNo} (${r.perRollWeight} ${r.unit})'),
+                          'Roll ${r.rollNo} (${r.perRollWeight} ${r.unit})',
+                        ),
                         subtitle: Text(r.vendorName),
                         value: _selectedRolls.contains(r.rollNo),
                         onChanged: (checked) {
@@ -175,10 +165,7 @@ class _ResponsePageState extends State<ResponsePage> {
           ),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: content,
-      ),
+      body: Padding(padding: const EdgeInsets.all(16), child: content),
     );
   }
 }
