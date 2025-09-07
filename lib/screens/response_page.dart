@@ -167,6 +167,7 @@ class _ResponsePageState extends State<ResponsePage> {
                   _selectedRolls.add(RollSelection(r));
                   _rollCtrl?.clear();
                 });
+                FocusScope.of(context).unfocus();
               },
             ),
             const SizedBox(height: 16),
