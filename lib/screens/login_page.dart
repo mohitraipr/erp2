@@ -29,8 +29,8 @@ class _LoginPageState extends State<LoginPage> {
 
     setState(() => _loading = true);
     try {
-      // Flip this to true if your server expects form-data instead of JSON:
-      const sendAsForm = false;
+      // Server expects x-www-form-urlencoded credentials
+      const sendAsForm = true;
 
       final data = await _api.login(
         username: _usernameCtrl.text.trim(),
