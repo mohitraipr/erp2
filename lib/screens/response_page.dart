@@ -46,6 +46,7 @@ class _ResponsePageState extends State<ResponsePage> {
         _rollsByType = data;
       });
     } on ApiException catch (e) {
+      debugPrint('Failed to load fabric rolls: $e');
       setState(() => _error = e.message);
     } finally {
       setState(() => _loading = false);
