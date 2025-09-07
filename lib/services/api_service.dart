@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/login_response.dart';
@@ -58,6 +59,7 @@ class ApiService {
         final msg =
             _extractMessage(json, raw) ??
             'Login failed: server did not return expected fields.';
+        debugPrint('login() bad response [$status]: $raw');
         throw ApiException(msg);
       }
 
@@ -65,6 +67,7 @@ class ApiService {
       if (status == 400 || status == 401 || status == 403) {
         final msg =
             _extractMessage(json, raw) ?? 'Invalid username or password.';
+        debugPrint('login() auth failure [$status]: $raw');
         throw ApiException(msg);
       }
 
@@ -72,14 +75,18 @@ class ApiService {
       final msg =
           _extractMessage(json, raw) ??
           'Server error ($status). Please try again.';
+      debugPrint('login() server error [$status]: $raw');
       throw ApiException(msg);
-    } on TimeoutException {
+    } on TimeoutException catch (e) {
+      debugPrint('login() timeout: $e');
       throw ApiException('Request timed out. Check your connection.');
-    } on SocketException {
+    } on SocketException catch (e) {
+      debugPrint('login() network error: $e');
       throw ApiException('No internet connection.');
     } on ApiException {
       rethrow;
     } catch (e) {
+      debugPrint('login() unexpected error: $e');
       throw ApiException('Unexpected error: $e');
     }
   }
@@ -109,15 +116,19 @@ class ApiService {
       }
 
       final msg = _extractMessage(json, raw) ??
-          'Failed to fetch fabric rolls.';
+          'Failed to fetch fabric rolls (status: $status).';
+      debugPrint('fetchFabricRolls() error [$status]: $raw');
       throw ApiException(msg);
-    } on TimeoutException {
+    } on TimeoutException catch (e) {
+      debugPrint('fetchFabricRolls() timeout: $e');
       throw ApiException('Request timed out. Check your connection.');
-    } on SocketException {
+    } on SocketException catch (e) {
+      debugPrint('fetchFabricRolls() network error: $e');
       throw ApiException('No internet connection.');
     } on ApiException {
       rethrow;
     } catch (e) {
+      debugPrint('fetchFabricRolls() unexpected error: $e');
       throw ApiException('Unexpected error: $e');
     }
   }
