@@ -58,14 +58,12 @@ class RollSelection {
 class SizeEntryData {
   final TextEditingController sizeCtrl = TextEditingController();
   final TextEditingController patternCtrl = TextEditingController();
-  final TextEditingController layersCtrl = TextEditingController();
   VoidCallback? _listener;
 
   void registerListener(VoidCallback listener) {
     _listener = listener;
     sizeCtrl.addListener(listener);
     patternCtrl.addListener(listener);
-    layersCtrl.addListener(listener);
   }
 
   int? get patternCount {
@@ -74,22 +72,16 @@ class SizeEntryData {
     return int.tryParse(raw);
   }
 
-  int? get layers {
-    final raw = layersCtrl.text.trim();
-    if (raw.isEmpty) return null;
-    return int.tryParse(raw);
-  }
-
-  int? get totalPieces {
+  int? totalPieces(int totalLayers) {
     final p = patternCount;
-    final l = layers;
-    if (p == null || l == null) return null;
-    return p * l;
+    if (p == null || totalLayers <= 0) return null;
+    return p * totalLayers;
   }
 
-  int bundleCount(int bundleSize) {
-    final total = totalPieces;
-    if (total == null || bundleSize <= 0) return 0;
+  int bundleCount(int bundleSize, int totalLayers) {
+    if (bundleSize <= 0) return 0;
+    final total = totalPieces(totalLayers);
+    if (total == null || total <= 0) return 0;
     return (total + bundleSize - 1) ~/ bundleSize;
   }
 
@@ -97,26 +89,21 @@ class SizeEntryData {
     return {
       'sizeLabel': sizeCtrl.text.trim(),
       'patternCount': patternCount ?? 0,
-      'layers': layers ?? 0,
-      'totalPieces': totalPieces ?? 0,
     };
   }
 
   void clear() {
     sizeCtrl.clear();
     patternCtrl.clear();
-    layersCtrl.clear();
   }
 
   void dispose() {
     if (_listener != null) {
       sizeCtrl.removeListener(_listener!);
       patternCtrl.removeListener(_listener!);
-      layersCtrl.removeListener(_listener!);
     }
     sizeCtrl.dispose();
     patternCtrl.dispose();
-    layersCtrl.dispose();
   }
 }
 
@@ -153,14 +140,19 @@ class _ResponsePageState extends State<ResponsePage> {
 
   int get _bundleSize => int.tryParse(_bundleSizeCtrl.text.trim()) ?? 0;
 
+  int get _totalLayers => _selectedRolls.fold<int>(
+        0,
+        (sum, item) => sum + (item.layers ?? 0),
+      );
+
   int get _totalPieces => _sizes.fold<int>(
         0,
-        (sum, item) => sum + (item.totalPieces ?? 0),
+        (sum, item) => sum + (item.totalPieces(_totalLayers) ?? 0),
       );
 
   int get _totalBundles => _sizes.fold<int>(
         0,
-        (sum, item) => sum + item.bundleCount(_bundleSize),
+        (sum, item) => sum + item.bundleCount(_bundleSize, _totalLayers),
       );
 
   double get _totalWeightUsed => _selectedRolls.fold<double>(
@@ -689,8 +681,8 @@ class _ResponsePageState extends State<ResponsePage> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Build your lot by selecting a fabric, choosing rolls, and entering pattern + layer counts. '
-              'Bundle codes and piece codes will be generated automatically.',
+              'Build your lot by selecting a fabric, choosing rolls, and entering pattern counts. '
+              'Total layers are taken from the selected rolls, and bundle/piece codes are generated automatically.',
               style: theme.textTheme.bodyMedium,
             ),
           ],
@@ -701,6 +693,7 @@ class _ResponsePageState extends State<ResponsePage> {
 
   Widget _buildSizesCard(BuildContext context) {
     final theme = Theme.of(context);
+    final totalLayers = _totalLayers;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -719,7 +712,9 @@ class _ResponsePageState extends State<ResponsePage> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'Total pieces are automatically calculated using Pattern × Layers.',
+                        totalLayers > 0
+                            ? 'Total pieces are calculated using Pattern × $totalLayers layers from selected rolls.'
+                            : 'Add rolls with layers to calculate pieces from Pattern × Layers.',
                         style: theme.textTheme.bodySmall,
                       ),
                     ],
@@ -740,8 +735,8 @@ class _ResponsePageState extends State<ResponsePage> {
               separatorBuilder: (_, __) => const SizedBox(height: 12),
               itemBuilder: (context, index) {
                 final entry = _sizes[index];
-                final pieces = entry.totalPieces;
-                final bundles = entry.bundleCount(_bundleSize);
+                final pieces = entry.totalPieces(totalLayers);
+                final bundles = entry.bundleCount(_bundleSize, totalLayers);
                 return _SizeEntryCard(
                   index: index,
                   entry: entry,
@@ -749,6 +744,7 @@ class _ResponsePageState extends State<ResponsePage> {
                   onRemove: () => _removeSizeEntry(index),
                   pieces: pieces,
                   bundles: bundles,
+                  totalLayers: totalLayers,
                 );
               },
             ),
@@ -879,6 +875,11 @@ class _ResponsePageState extends State<ResponsePage> {
               label: 'Total pieces',
               value: _totalPieces.toString(),
               icon: Icons.view_module,
+            ),
+            _SummaryTile(
+              label: 'Total layers',
+              value: _totalLayers.toString(),
+              icon: Icons.view_stream,
             ),
             _SummaryTile(
               label: 'Weight used',
@@ -1044,6 +1045,7 @@ class _SizeEntryCard extends StatelessWidget {
   final VoidCallback onRemove;
   final int? pieces;
   final int bundles;
+  final int totalLayers;
 
   const _SizeEntryCard({
     required this.index,
@@ -1052,6 +1054,7 @@ class _SizeEntryCard extends StatelessWidget {
     required this.onRemove,
     required this.pieces,
     required this.bundles,
+    required this.totalLayers,
   });
 
   @override
@@ -1095,42 +1098,29 @@ class _SizeEntryCard extends StatelessWidget {
             },
           ),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: TextFormField(
-                  controller: entry.patternCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Pattern count',
-                  ),
-                  validator: (value) {
-                    final parsed = int.tryParse(value ?? '');
-                    if (parsed == null || parsed <= 0) {
-                      return 'Required';
-                    }
-                    return null;
-                  },
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: TextFormField(
-                  controller: entry.layersCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Layers',
-                  ),
-                  validator: (value) {
-                    final parsed = int.tryParse(value ?? '');
-                    if (parsed == null || parsed <= 0) {
-                      return 'Required';
-                    }
-                    return null;
-                  },
-                ),
-              ),
-            ],
+          TextFormField(
+            controller: entry.patternCtrl,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Pattern count',
+            ),
+            validator: (value) {
+              final parsed = int.tryParse(value ?? '');
+              if (parsed == null || parsed <= 0) {
+                return 'Required';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              totalLayers > 0
+                  ? 'Using $totalLayers total layers from selected rolls.'
+                  : 'Add rolls to specify total layers for this lot.',
+              style: theme.textTheme.bodySmall,
+            ),
           ),
           const SizedBox(height: 12),
           Row(
