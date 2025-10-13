@@ -1020,8 +1020,14 @@ class _LotInfoCardState extends State<_LotInfoCard> {
   void didUpdateWidget(covariant _LotInfoCard oldWidget) {
     super.didUpdateWidget(oldWidget);
     if ((widget.selectedFabric ?? '') != (oldWidget.selectedFabric ?? '')) {
-      _fabricCtrl.text = widget.selectedFabric ?? '';
-      _fabricFieldKey.currentState?.didChange(widget.selectedFabric ?? '');
+      final updatedValue = widget.selectedFabric ?? '';
+      if (_fabricCtrl.text != updatedValue) {
+        _fabricCtrl.text = updatedValue;
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _fabricFieldKey.currentState?.didChange(updatedValue);
+      });
     }
   }
 
