@@ -218,25 +218,26 @@ class ApiService {
 
       final status = res.statusCode;
       final raw = _safeDecodeUtf8(res.bodyBytes);
-      final decoded = _tryParseJson(raw);
+      final decoded = _tryDecodeJson(raw);
 
       if (status >= 200 && status < 300 && decoded != null) {
-        Iterable<dynamic> rawList;
-        if (decoded is List) {
+        Iterable<dynamic> rawList = const [];
+        if (decoded is Iterable) {
           rawList = decoded;
         } else if (decoded is Map<String, dynamic>) {
           final lotsValue = decoded['lots'] ?? decoded['data'];
-          if (lotsValue is List) {
+          if (lotsValue is Iterable) {
             rawList = lotsValue;
-          } else if (lotsValue is Iterable) {
-            rawList = lotsValue;
+          } else if (lotsValue is Map) {
+            rawList = (lotsValue as Map)
+                .values
+                .whereType<Iterable>()
+                .expand((element) => element);
           } else {
             rawList = decoded.values
                 .whereType<Iterable>()
                 .expand((element) => element);
           }
-        } else {
-          rawList = const [];
         }
 
         return rawList
@@ -344,6 +345,14 @@ class ApiService {
       return utf8.decode(bytes);
     } catch (_) {
       return const Latin1Decoder().convert(bytes);
+    }
+  }
+
+  static dynamic _tryDecodeJson(String raw) {
+    try {
+      return jsonDecode(raw);
+    } catch (_) {
+      return null;
     }
   }
 
