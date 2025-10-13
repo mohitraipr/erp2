@@ -59,88 +59,118 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
-    final spacing = const SizedBox(height: 16);
+    final spacing = const SizedBox(height: 18);
+    final theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(title: const Text('Login')),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: Card(
-            margin: const EdgeInsets.all(16),
-            elevation: 3,
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      'Aurora Login',
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    spacing,
-                    TextFormField(
-                      controller: _usernameCtrl,
-                      textInputAction: TextInputAction.next,
-                      decoration: const InputDecoration(
-                        labelText: 'Username',
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (v) => (v == null || v.trim().isEmpty)
-                          ? 'Please enter username'
-                          : null,
-                    ),
-                    spacing,
-                    TextFormField(
-                      controller: _passwordCtrl,
-                      obscureText: _obscure,
-                      decoration: InputDecoration(
-                        labelText: 'Password',
-                        border: const OutlineInputBorder(),
-                        suffixIcon: IconButton(
-                          icon: Icon(
-                            _obscure ? Icons.visibility : Icons.visibility_off,
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFF1F3C88), Color(0xFF4062BB), Color(0xFF74C0FC)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Center(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final maxWidth = constraints.maxWidth < 420 ? constraints.maxWidth : 420.0;
+              return ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 440),
+                child: Card(
+                  margin: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+                    child: Form(
+                      key: _formKey,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Aurora ERP Portal',
+                            style: theme.textTheme.headlineSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
-                          onPressed: () => setState(() => _obscure = !_obscure),
-                        ),
-                      ),
-                      validator: (v) => (v == null || v.isEmpty)
-                          ? 'Please enter password'
-                          : null,
-                      onFieldSubmitted: (_) => _submit(),
-                    ),
-                    spacing,
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: _loading ? null : _submit,
-                        icon: _loading
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
+                          const SizedBox(height: 8),
+                          Text(
+                            'Sign in with your Aurora credentials to manage daily operations.',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                          spacing,
+                          TextFormField(
+                            controller: _usernameCtrl,
+                            textInputAction: TextInputAction.next,
+                            decoration: const InputDecoration(
+                              labelText: 'Username',
+                              prefixIcon: Icon(Icons.person_outline),
+                            ),
+                            validator: (v) => (v == null || v.trim().isEmpty)
+                                ? 'Please enter username'
+                                : null,
+                          ),
+                          spacing,
+                          TextFormField(
+                            controller: _passwordCtrl,
+                            obscureText: _obscure,
+                            decoration: InputDecoration(
+                              labelText: 'Password',
+                              prefixIcon: const Icon(Icons.lock_outline),
+                              suffixIcon: IconButton(
+                                icon: Icon(
+                                  _obscure ? Icons.visibility : Icons.visibility_off,
                                 ),
-                              )
-                            : const Icon(Icons.login),
-                        label: Text(_loading ? 'Signing in…' : 'Sign in'),
+                                onPressed: () => setState(() => _obscure = !_obscure),
+                              ),
+                            ),
+                            validator: (v) => (v == null || v.isEmpty)
+                                ? 'Please enter password'
+                                : null,
+                            onFieldSubmitted: (_) => _submit(),
+                          ),
+                          spacing,
+                          SizedBox(
+                            width: maxWidth,
+                            child: ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              onPressed: _loading ? null : _submit,
+                              child: _loading
+                                  ? Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: const [
+                                        SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(strokeWidth: 2),
+                                        ),
+                                        SizedBox(width: 12),
+                                        Text('Signing in…'),
+                                      ],
+                                    )
+                                  : const Text('Sign in'),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            'Having trouble? Contact your Aurora administrator to reset your credentials.',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Tip: If bad logins still look like “success”, set sendAsForm=true in _submit() '
-                      'or check your backend to return 401 with a JSON message.',
-                      style: TextStyle(fontSize: 12, color: Colors.black54),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-            ),
+              );
+            },
           ),
         ),
       ),
