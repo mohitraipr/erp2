@@ -898,7 +898,6 @@ class _ResponsePageState extends State<ResponsePage> {
   }
 
   Widget _buildLotSummaryCard(BuildContext context) {
-    final theme = Theme.of(context);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -1275,13 +1274,13 @@ class _SizeEntryCardState extends State<_SizeEntryCard> {
         children: [
           Row(
             children: [
-              Text('Size ${index + 1}', style: theme.textTheme.titleSmall),
+              Text('Size ${widget.index + 1}', style: theme.textTheme.titleSmall),
               const Spacer(),
-              if (canRemove)
+              if (widget.canRemove)
                 IconButton(
                   tooltip: 'Remove size',
                   icon: const Icon(Icons.close),
-                  onPressed: onRemove,
+                  onPressed: widget.onRemove,
                 ),
             ],
           ),
@@ -1368,8 +1367,8 @@ class _SizeEntryCardState extends State<_SizeEntryCard> {
           Align(
             alignment: Alignment.centerLeft,
             child: Text(
-              totalLayers > 0
-                  ? 'Using $totalLayers total layers from selected rolls.'
+              widget.totalLayers > 0
+                  ? 'Using ${widget.totalLayers} total layers from selected rolls.'
                   : 'Add rolls to specify total layers for this lot.',
               style: theme.textTheme.bodySmall,
             ),
@@ -1378,8 +1377,11 @@ class _SizeEntryCardState extends State<_SizeEntryCard> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _MiniInfo(label: 'Total pieces', value: pieces?.toString() ?? '—'),
-              _MiniInfo(label: 'Bundles', value: bundles > 0 ? bundles.toString() : '—'),
+              _MiniInfo(label: 'Total pieces', value: widget.pieces?.toString() ?? '—'),
+              _MiniInfo(
+                label: 'Bundles',
+                value: widget.bundles > 0 ? widget.bundles.toString() : '—',
+              ),
             ],
           ),
         ],
