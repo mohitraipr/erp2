@@ -107,6 +107,50 @@ class SizeEntryData {
   }
 }
 
+const List<String> _alphaSizeOptions = [
+  'XS',
+  'S',
+  'M',
+  'L',
+  'XL',
+  '2XL',
+  '3XL',
+  '4XL',
+  '5XL',
+  '6XL',
+];
+
+const List<String> _numericSizeOptions = [
+  '24',
+  '25',
+  '26',
+  '27',
+  '28',
+  '29',
+  '30',
+  '31',
+  '32',
+  '33',
+  '34',
+  '35',
+  '36',
+  '37',
+  '38',
+  '39',
+  '40',
+  '41',
+  '42',
+  '43',
+  '44',
+  '45',
+  '46',
+];
+
+const List<String> _allSizeOptions = [
+  ..._alphaSizeOptions,
+  ..._numericSizeOptions,
+];
+
 class _ResponsePageState extends State<ResponsePage> {
   final GlobalKey<FormState> _lotFormKey = GlobalKey<FormState>();
   final TextEditingController _skuCtrl = TextEditingController();
@@ -940,7 +984,7 @@ class _ResponsePageState extends State<ResponsePage> {
   }
 }
 
-class _LotInfoCard extends StatelessWidget {
+class _LotInfoCard extends StatefulWidget {
   final TextEditingController skuCtrl;
   final TextEditingController bundleSizeCtrl;
   final TextEditingController remarkCtrl;
@@ -958,6 +1002,48 @@ class _LotInfoCard extends StatelessWidget {
   });
 
   @override
+  State<_LotInfoCard> createState() => _LotInfoCardState();
+}
+
+class _LotInfoCardState extends State<_LotInfoCard> {
+  final GlobalKey<FormFieldState<String>> _fabricFieldKey = GlobalKey<FormFieldState<String>>();
+  late final TextEditingController _fabricCtrl;
+  late final FocusNode _fabricFocus;
+
+  @override
+  void initState() {
+    super.initState();
+    _fabricCtrl = TextEditingController(text: widget.selectedFabric ?? '');
+    _fabricFocus = FocusNode();
+  }
+
+  @override
+  void didUpdateWidget(covariant _LotInfoCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if ((widget.selectedFabric ?? '') != (oldWidget.selectedFabric ?? '')) {
+      _fabricCtrl.text = widget.selectedFabric ?? '';
+      _fabricFieldKey.currentState?.didChange(widget.selectedFabric ?? '');
+    }
+  }
+
+  @override
+  void dispose() {
+    _fabricCtrl.dispose();
+    _fabricFocus.dispose();
+    super.dispose();
+  }
+
+  Iterable<String> _fabricOptionsBuilder(TextEditingValue value) {
+    final query = value.text.trim().toLowerCase();
+    if (query.isEmpty) {
+      return widget.fabricTypes;
+    }
+    return widget.fabricTypes.where(
+      (type) => type.toLowerCase().contains(query),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Card(
@@ -972,7 +1058,7 @@ class _LotInfoCard extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             TextFormField(
-              controller: skuCtrl,
+              controller: widget.skuCtrl,
               textInputAction: TextInputAction.next,
               decoration: const InputDecoration(
                 labelText: 'SKU',
@@ -986,30 +1072,107 @@ class _LotInfoCard extends StatelessWidget {
               },
             ),
             const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              initialValue: selectedFabric,
-              decoration: const InputDecoration(
-                labelText: 'Fabric type',
-              ),
-              items: fabricTypes
-                  .map(
-                    (type) => DropdownMenuItem<String>(
-                      value: type,
-                      child: Text(type),
-                    ),
-                  )
-                  .toList(),
-              onChanged: onFabricChanged,
-              validator: (value) {
-                if (value == null || value.isEmpty) {
+            FormField<String>(
+              key: _fabricFieldKey,
+              initialValue: widget.selectedFabric ?? '',
+              validator: (_) {
+                final value = _fabricCtrl.text.trim();
+                if (value.isEmpty) {
                   return 'Select a fabric type.';
                 }
+                if (!widget.fabricTypes.contains(value)) {
+                  return 'Choose a fabric from the list.';
+                }
                 return null;
+              },
+              builder: (state) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    RawAutocomplete<String>(
+                      focusNode: _fabricFocus,
+                      textEditingController: _fabricCtrl,
+                      optionsBuilder: _fabricOptionsBuilder,
+                      displayStringForOption: (option) => option,
+                      onSelected: (option) {
+                        _fabricCtrl.text = option;
+                        state.didChange(option);
+                        widget.onFabricChanged(option);
+                      },
+                      fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+                        return ValueListenableBuilder<TextEditingValue>(
+                          valueListenable: controller,
+                          builder: (context, value, _) {
+                            return TextField(
+                              controller: controller,
+                              focusNode: focusNode,
+                              decoration: InputDecoration(
+                                labelText: 'Fabric type',
+                                errorText: state.errorText,
+                                suffixIcon: value.text.isEmpty
+                                    ? null
+                                    : IconButton(
+                                        tooltip: 'Clear selection',
+                                        icon: const Icon(Icons.clear),
+                                        onPressed: () {
+                                          controller.clear();
+                                          state.didChange('');
+                                          widget.onFabricChanged(null);
+                                        },
+                                      ),
+                              ),
+                              onChanged: (text) {
+                                state.didChange(text);
+                                final trimmed = text.trim();
+                                if (trimmed.isEmpty) {
+                                  if (widget.selectedFabric != null) {
+                                    widget.onFabricChanged(null);
+                                  }
+                                } else if (widget.selectedFabric != null && widget.selectedFabric != trimmed) {
+                                  widget.onFabricChanged(null);
+                                }
+                              },
+                              onSubmitted: (text) {
+                                final trimmed = text.trim();
+                                if (widget.fabricTypes.contains(trimmed)) {
+                                  widget.onFabricChanged(trimmed);
+                                }
+                              },
+                            );
+                          },
+                        );
+                      },
+                      optionsViewBuilder: (context, onSelected, options) {
+                        return Align(
+                          alignment: Alignment.topLeft,
+                          child: Material(
+                            elevation: 4,
+                            child: SizedBox(
+                              height: 200,
+                              width: 320,
+                              child: ListView.builder(
+                                padding: EdgeInsets.zero,
+                                itemCount: options.length,
+                                itemBuilder: (context, index) {
+                                  final option = options.elementAt(index);
+                                  return ListTile(
+                                    title: Text(option),
+                                    onTap: () => onSelected(option),
+                                  );
+                                },
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                );
               },
             ),
             const SizedBox(height: 16),
             TextFormField(
-              controller: bundleSizeCtrl,
+              controller: widget.bundleSizeCtrl,
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(
                 labelText: 'Bundle size',
@@ -1025,7 +1188,7 @@ class _LotInfoCard extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             TextFormField(
-              controller: remarkCtrl,
+              controller: widget.remarkCtrl,
               maxLines: 3,
               decoration: const InputDecoration(
                 labelText: 'Remarks (optional)',
@@ -1038,7 +1201,7 @@ class _LotInfoCard extends StatelessWidget {
   }
 }
 
-class _SizeEntryCard extends StatelessWidget {
+class _SizeEntryCard extends StatefulWidget {
   final int index;
   final SizeEntryData entry;
   final bool canRemove;
@@ -1056,6 +1219,46 @@ class _SizeEntryCard extends StatelessWidget {
     required this.bundles,
     required this.totalLayers,
   });
+
+  @override
+  State<_SizeEntryCard> createState() => _SizeEntryCardState();
+}
+
+class _SizeEntryCardState extends State<_SizeEntryCard> {
+  final GlobalKey<FormFieldState<String>> _sizeFieldKey = GlobalKey<FormFieldState<String>>();
+  late final FocusNode _sizeFocus;
+
+  @override
+  void initState() {
+    super.initState();
+    _sizeFocus = FocusNode();
+  }
+
+  @override
+  void didUpdateWidget(covariant _SizeEntryCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.entry.sizeCtrl.text != widget.entry.sizeCtrl.text) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _sizeFieldKey.currentState?.didChange(widget.entry.sizeCtrl.text);
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _sizeFocus.dispose();
+    super.dispose();
+  }
+
+  Iterable<String> _sizeOptionsBuilder(TextEditingValue value) {
+    final query = value.text.trim().toLowerCase();
+    if (query.isEmpty) {
+      return _allSizeOptions;
+    }
+    return _allSizeOptions.where((option) => option.toLowerCase().contains(query));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1083,23 +1286,72 @@ class _SizeEntryCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          TextFormField(
-            controller: entry.sizeCtrl,
-            textInputAction: TextInputAction.next,
-            decoration: const InputDecoration(
-              labelText: 'Size label',
-              hintText: 'e.g. M, 32, 10',
-            ),
-            validator: (value) {
-              if (value == null || value.trim().isEmpty) {
+          FormField<String>(
+            key: _sizeFieldKey,
+            initialValue: widget.entry.sizeCtrl.text,
+            validator: (_) {
+              if (widget.entry.sizeCtrl.text.trim().isEmpty) {
                 return 'Enter a size label.';
               }
               return null;
             },
+            builder: (state) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  RawAutocomplete<String>(
+                    focusNode: _sizeFocus,
+                    textEditingController: widget.entry.sizeCtrl,
+                    optionsBuilder: _sizeOptionsBuilder,
+                    displayStringForOption: (option) => option,
+                    onSelected: (option) {
+                      widget.entry.sizeCtrl.text = option;
+                      state.didChange(option);
+                    },
+                    fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+                      return TextField(
+                        controller: controller,
+                        focusNode: focusNode,
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: 'Size label',
+                          hintText: 'e.g. M, 32, 10',
+                          errorText: state.errorText,
+                        ),
+                        onChanged: state.didChange,
+                      );
+                    },
+                    optionsViewBuilder: (context, onSelected, options) {
+                      return Align(
+                        alignment: Alignment.topLeft,
+                        child: Material(
+                          elevation: 4,
+                          child: SizedBox(
+                            height: 200,
+                            width: 240,
+                            child: ListView.builder(
+                              padding: EdgeInsets.zero,
+                              itemCount: options.length,
+                              itemBuilder: (context, index) {
+                                final option = options.elementAt(index);
+                                return ListTile(
+                                  title: Text(option),
+                                  onTap: () => onSelected(option),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              );
+            },
           ),
           const SizedBox(height: 12),
           TextFormField(
-            controller: entry.patternCtrl,
+            controller: widget.entry.patternCtrl,
             keyboardType: TextInputType.number,
             decoration: const InputDecoration(
               labelText: 'Pattern count',
@@ -1133,6 +1385,49 @@ class _SizeEntryCard extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _MaxWeightInputFormatter extends TextInputFormatter {
+  _MaxWeightInputFormatter(this.maxValue);
+
+  final double maxValue;
+  static final RegExp _validPattern = RegExp(r'^[0-9]*[.]?[0-9]*$');
+
+  String _format(double value) {
+    var text = value.toStringAsFixed(2);
+    if (text.contains('.')) {
+      text = text.replaceAll(RegExp(r'0+$'), '');
+      text = text.replaceAll(RegExp(r'[.]$'), '');
+    }
+    return text;
+  }
+
+  @override
+  TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
+    final text = newValue.text;
+    if (text.isEmpty) {
+      return newValue;
+    }
+
+    if (!_validPattern.hasMatch(text)) {
+      return oldValue;
+    }
+
+    final parsed = double.tryParse(text);
+    if (parsed == null) {
+      return newValue;
+    }
+
+    if (parsed > maxValue) {
+      final capped = _format(maxValue);
+      return TextEditingValue(
+        text: capped,
+        selection: TextSelection.collapsed(offset: capped.length),
+      );
+    }
+
+    return newValue;
   }
 }
 
@@ -1188,6 +1483,9 @@ class _RollCard extends StatelessWidget {
                 child: TextFormField(
                   controller: selection.weightCtrl,
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  inputFormatters: [
+                    _MaxWeightInputFormatter(selection.roll.perRollWeight),
+                  ],
                   decoration: const InputDecoration(
                     labelText: 'Weight used',
                   ),
