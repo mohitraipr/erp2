@@ -221,27 +221,24 @@ class ApiService {
       final decoded = _tryParseJson(raw);
 
       if (status >= 200 && status < 300 && decoded != null) {
-        Iterable<dynamic> list;
+        Iterable<dynamic> rawList = const [];
         if (decoded is List) {
-          list = decoded;
+          rawList = decoded;
         } else if (decoded is Map<String, dynamic>) {
           final lotsValue = decoded['lots'] ?? decoded['data'];
           if (lotsValue is List) {
-            list = lotsValue;
+            rawList = lotsValue;
           } else {
-            list = decoded.values
+            rawList = decoded.values
                 .whereType<List>()
-                .expand((element) => element)
-                .toList();
+                .expand((element) => element);
           }
-        } else {
-          list = const [];
         }
 
-        return list
-            .where((e) => e is Map)
-            .map((e) => ApiLotSummary.fromJson(
-                Map<String, dynamic>.from(e as Map<dynamic, dynamic>)))
+        return rawList
+            .whereType<Map<dynamic, dynamic>>()
+            .map((e) =>
+                ApiLotSummary.fromJson(Map<String, dynamic>.from(e)))
             .toList();
       }
 
