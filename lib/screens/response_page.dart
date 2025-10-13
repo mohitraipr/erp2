@@ -22,6 +22,7 @@ class ResponsePage extends StatefulWidget {
 class RollSelection {
   final FabricRoll roll;
   final TextEditingController weightCtrl = TextEditingController();
+  final TextEditingController layersCtrl = TextEditingController();
   VoidCallback? _listener;
 
   RollSelection(this.roll);
@@ -32,16 +33,25 @@ class RollSelection {
     return double.tryParse(value);
   }
 
+  int? get layers {
+    final value = layersCtrl.text.trim();
+    if (value.isEmpty) return null;
+    return int.tryParse(value);
+  }
+
   void registerListener(VoidCallback listener) {
     _listener = listener;
     weightCtrl.addListener(listener);
+    layersCtrl.addListener(listener);
   }
 
   void dispose() {
     if (_listener != null) {
       weightCtrl.removeListener(_listener!);
+      layersCtrl.removeListener(_listener!);
     }
     weightCtrl.dispose();
+    layersCtrl.dispose();
   }
 }
 
@@ -293,22 +303,28 @@ class _ResponsePageState extends State<ResponsePage> {
       return;
     }
 
-    RollSelection? invalidRoll;
     for (final roll in _selectedRolls) {
       if ((roll.weightUsed ?? 0) <= 0) {
-        invalidRoll = roll;
-        break;
-      }
-    }
-    if (invalidRoll != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Please enter the weight used for roll ${invalidRoll.roll.rollNo}.',
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Please enter the weight used for roll ${roll.roll.rollNo}.',
+            ),
           ),
-        ),
-      );
-      return;
+        );
+        return;
+      }
+
+      if ((roll.layers ?? 0) <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Please enter the layers cut for roll ${roll.roll.rollNo}.',
+            ),
+          ),
+        );
+        return;
+      }
     }
 
     if (_bundleSize <= 0) {
@@ -323,6 +339,7 @@ class _ResponsePageState extends State<ResponsePage> {
         .map((e) => {
               'rollNo': e.roll.rollNo,
               'weightUsed': e.weightUsed,
+              'layers': e.layers,
             })
         .toList();
 
@@ -761,7 +778,7 @@ class _ResponsePageState extends State<ResponsePage> {
             Text(
               _selectedFabric == null
                   ? 'Choose a fabric type above to search available rolls.'
-                  : 'Search rolls for $_selectedFabric and enter the weight used for each roll.',
+                  : 'Search rolls for $_selectedFabric and enter the weight and layers used for each roll.',
               style: theme.textTheme.bodySmall,
             ),
             const SizedBox(height: 16),
@@ -1175,12 +1192,29 @@ class _RollCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          TextFormField(
-            controller: selection.weightCtrl,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: const InputDecoration(
-              labelText: 'Weight used',
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: TextFormField(
+                  controller: selection.weightCtrl,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'Weight used',
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextFormField(
+                  controller: selection.layersCtrl,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  decoration: const InputDecoration(
+                    labelText: 'Layers cut',
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
