@@ -4,8 +4,9 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
-import '../models/login_response.dart';
+import '../models/api_lot.dart';
 import '../models/fabric_roll.dart';
+import '../models/login_response.dart';
 
 class ApiException implements Exception {
   final String message;
@@ -20,6 +21,17 @@ class ApiService {
   String? _sessionCookie;
   ApiService({http.Client? client}) : _client = client ?? http.Client();
 
+  Map<String, String> _authorizedHeaders({Map<String, String>? base}) {
+    final headers = <String, String>{
+      'Accept': 'application/json, text/plain, */*',
+      if (base != null) ...base,
+    };
+    if (_sessionCookie != null && _sessionCookie!.isNotEmpty) {
+      headers['Cookie'] = _sessionCookie!;
+    }
+    return headers;
+  }
+
   /// Set [sendAsForm] = true if your endpoint expects x-www-form-urlencoded.
   Future<LoginResponse> login({
     required String username,
@@ -29,12 +41,13 @@ class ApiService {
     final uri = Uri.parse('$_baseUrl/api/login');
 
     try {
-      final headers = <String, String>{
-        'Accept': 'application/json, text/plain, */*',
-        'Content-Type': sendAsForm
-            ? 'application/x-www-form-urlencoded'
-            : 'application/json',
-      };
+      final headers = _authorizedHeaders(
+        base: {
+          'Content-Type': sendAsForm
+              ? 'application/x-www-form-urlencoded'
+              : 'application/json',
+        },
+      );
 
       final body = sendAsForm
           ? {'username': username, 'password': password}
@@ -99,10 +112,7 @@ class ApiService {
   Future<Map<String, List<FabricRoll>>> fetchFabricRolls() async {
     final uri = Uri.parse('$_baseUrl/api/fabric-rolls');
     try {
-      final headers = <String, String>{};
-      if (_sessionCookie != null) {
-        headers['Cookie'] = _sessionCookie!;
-      }
+      final headers = _authorizedHeaders();
       final res = await _client
           .get(uri, headers: headers)
           .timeout(const Duration(seconds: 20));
@@ -139,6 +149,188 @@ class ApiService {
       rethrow;
     } catch (e) {
       debugPrint('fetchFabricRolls() unexpected error: $e');
+      throw ApiException('Unexpected error: $e');
+    }
+  }
+
+  Future<ApiLot> createLot({
+    required String sku,
+    required String fabricType,
+    required int bundleSize,
+    String? remark,
+    required List<Map<String, dynamic>> sizes,
+    required List<Map<String, dynamic>> rolls,
+  }) async {
+    final uri = Uri.parse('$_baseUrl/api/lots');
+    try {
+      final res = await _client
+          .post(
+            uri,
+            headers: _authorizedHeaders(
+              base: const {'Content-Type': 'application/json'},
+            ),
+            body: jsonEncode({
+              'sku': sku,
+              'fabricType': fabricType,
+              'remark': remark,
+              'bundleSize': bundleSize,
+              'sizes': sizes,
+              'rolls': rolls,
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
+
+      final status = res.statusCode;
+      final raw = _safeDecodeUtf8(res.bodyBytes);
+      final Map<String, dynamic>? json = _tryParseJson(raw);
+
+      if (status >= 200 && status < 300 && json != null) {
+        final lotJson = json['lot'];
+        if (lotJson is Map<String, dynamic>) {
+          return ApiLot.fromJson(lotJson);
+        }
+      }
+
+      final msg = _extractMessage(json, raw) ??
+          'Failed to create lot (status: $status).';
+      debugPrint('createLot() error [$status]: $raw');
+      throw ApiException(msg);
+    } on TimeoutException catch (e) {
+      debugPrint('createLot() timeout: $e');
+      throw ApiException('Request timed out. Please try again.');
+    } on SocketException catch (e) {
+      debugPrint('createLot() network error: $e');
+      throw ApiException('No internet connection.');
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      debugPrint('createLot() unexpected error: $e');
+      throw ApiException('Unexpected error: $e');
+    }
+  }
+
+  Future<List<ApiLotSummary>> fetchMyLots() async {
+    final uri = Uri.parse('$_baseUrl/api/lots');
+    try {
+      final res = await _client
+          .get(uri, headers: _authorizedHeaders())
+          .timeout(const Duration(seconds: 20));
+
+      final status = res.statusCode;
+      final raw = _safeDecodeUtf8(res.bodyBytes);
+      final decoded = _tryParseJson(raw);
+
+      if (status >= 200 && status < 300 && decoded != null) {
+        Iterable<dynamic> list;
+        if (decoded is List) {
+          list = decoded;
+        } else if (decoded is Map<String, dynamic>) {
+          final lotsValue = decoded['lots'] ?? decoded['data'];
+          if (lotsValue is List) {
+            list = lotsValue;
+          } else {
+            list = decoded.values
+                .whereType<List>()
+                .expand((element) => element)
+                .toList();
+          }
+        } else {
+          list = const [];
+        }
+
+        return list
+            .where((e) => e is Map)
+            .map((e) => ApiLotSummary.fromJson(
+                Map<String, dynamic>.from(e as Map<dynamic, dynamic>)))
+            .toList();
+      }
+
+      final msg = _extractMessage(decoded, raw) ??
+          'Failed to fetch lots (status: $status).';
+      debugPrint('fetchMyLots() error [$status]: $raw');
+      throw ApiException(msg);
+    } on TimeoutException catch (e) {
+      debugPrint('fetchMyLots() timeout: $e');
+      throw ApiException('Request timed out. Check your connection.');
+    } on SocketException catch (e) {
+      debugPrint('fetchMyLots() network error: $e');
+      throw ApiException('No internet connection.');
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      debugPrint('fetchMyLots() unexpected error: $e');
+      throw ApiException('Unexpected error: $e');
+    }
+  }
+
+  Future<ApiLot> fetchLotDetail(int lotId) async {
+    final uri = Uri.parse('$_baseUrl/api/lots/$lotId');
+    try {
+      final res = await _client
+          .get(uri, headers: _authorizedHeaders())
+          .timeout(const Duration(seconds: 20));
+
+      final status = res.statusCode;
+      final raw = _safeDecodeUtf8(res.bodyBytes);
+      final Map<String, dynamic>? json = _tryParseJson(raw);
+
+      if (status >= 200 && status < 300 && json != null) {
+        return ApiLot.fromJson(json);
+      }
+
+      final msg = _extractMessage(json, raw) ??
+          'Failed to fetch lot $lotId (status: $status).';
+      debugPrint('fetchLotDetail() error [$status]: $raw');
+      throw ApiException(msg);
+    } on TimeoutException catch (e) {
+      debugPrint('fetchLotDetail() timeout: $e');
+      throw ApiException('Request timed out. Check your connection.');
+    } on SocketException catch (e) {
+      debugPrint('fetchLotDetail() network error: $e');
+      throw ApiException('No internet connection.');
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      debugPrint('fetchLotDetail() unexpected error: $e');
+      throw ApiException('Unexpected error: $e');
+    }
+  }
+
+  Future<String> downloadLotCsv({
+    required int lotId,
+    required LotCsvType type,
+  }) async {
+    final path = type == LotCsvType.bundles
+        ? 'bundles'
+        : 'pieces';
+    final uri = Uri.parse('$_baseUrl/api/lots/$lotId/$path/download');
+    try {
+      final res = await _client
+          .get(uri, headers: _authorizedHeaders())
+          .timeout(const Duration(seconds: 20));
+
+      final status = res.statusCode;
+      final raw = _safeDecodeUtf8(res.bodyBytes);
+
+      if (status >= 200 && status < 300) {
+        return raw;
+      }
+
+      final Map<String, dynamic>? json = _tryParseJson(raw);
+      final msg = _extractMessage(json, raw) ??
+          'Failed to download ${type.name} CSV (status: $status).';
+      debugPrint('downloadLotCsv() error [$status]: $raw');
+      throw ApiException(msg);
+    } on TimeoutException catch (e) {
+      debugPrint('downloadLotCsv() timeout: $e');
+      throw ApiException('Request timed out. Check your connection.');
+    } on SocketException catch (e) {
+      debugPrint('downloadLotCsv() network error: $e');
+      throw ApiException('No internet connection.');
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      debugPrint('downloadLotCsv() unexpected error: $e');
       throw ApiException('Unexpected error: $e');
     }
   }
@@ -211,3 +403,5 @@ class ApiService {
     return null;
   }
 }
+
+enum LotCsvType { bundles, pieces }
