@@ -193,8 +193,9 @@ class _ResponsePageState extends State<ResponsePage> {
       if (!mounted) return;
       setState(() => _rollsError = e.message);
     } finally {
-      if (!mounted) return;
-      setState(() => _loadingRolls = false);
+      if (mounted) {
+        setState(() => _loadingRolls = false);
+      }
     }
   }
 
@@ -213,8 +214,9 @@ class _ResponsePageState extends State<ResponsePage> {
       if (!mounted) return;
       setState(() => _lotsError = e.message);
     } finally {
-      if (!mounted) return;
-      setState(() => _loadingLots = false);
+      if (mounted) {
+        setState(() => _loadingLots = false);
+      }
     }
   }
 
@@ -355,7 +357,6 @@ class _ResponsePageState extends State<ResponsePage> {
     _skuCtrl.clear();
     _remarkCtrl.clear();
     _bundleSizeCtrl.text = '12';
-    _rollSearchCtrl.clear();
     _selectedFabric = null;
     for (final size in _sizes) {
       size.dispose();
@@ -960,7 +961,7 @@ class _LotInfoCard extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
-              value: selectedFabric,
+              initialValue: selectedFabric,
               decoration: const InputDecoration(
                 labelText: 'Fabric type',
               ),
@@ -1033,7 +1034,9 @@ class _SizeEntryCard extends StatelessWidget {
     final theme = Theme.of(context);
     return Container(
       decoration: BoxDecoration(
-        border: Border.all(color: theme.colorScheme.primary.withOpacity(0.2)),
+        border: Border.all(
+          color: theme.colorScheme.primary.withValues(alpha: 0.2),
+        ),
         borderRadius: BorderRadius.circular(12),
       ),
       padding: const EdgeInsets.all(16),
@@ -1129,7 +1132,9 @@ class _RollCard extends StatelessWidget {
     final theme = Theme.of(context);
     return Container(
       decoration: BoxDecoration(
-        border: Border.all(color: theme.colorScheme.primary.withOpacity(0.2)),
+        border: Border.all(
+          color: theme.colorScheme.primary.withValues(alpha: 0.2),
+        ),
         borderRadius: BorderRadius.circular(12),
       ),
       padding: const EdgeInsets.all(16),
@@ -1196,7 +1201,8 @@ class _SummaryTile extends StatelessWidget {
       children: [
         CircleAvatar(
           radius: 22,
-          backgroundColor: theme.colorScheme.primary.withOpacity(0.1),
+          backgroundColor:
+              theme.colorScheme.primary.withValues(alpha: 0.1),
           child: Icon(icon, color: theme.colorScheme.primary),
         ),
         const SizedBox(height: 8),
@@ -1362,8 +1368,9 @@ class _SizeTable extends StatelessWidget {
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: DataTable(
-        headingRowColor: MaterialStateProperty.resolveWith(
-          (states) => Theme.of(context).colorScheme.primary.withOpacity(0.08),
+        headingRowColor: WidgetStateProperty.resolveWith(
+          (states) =>
+              Theme.of(context).colorScheme.primary.withValues(alpha: 0.08),
         ),
         columns: const [
           DataColumn(label: Text('Size')), 
