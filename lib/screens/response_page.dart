@@ -131,7 +131,15 @@ class _ResponsePageState extends State<ResponsePage> {
   String? _rollsError;
   String? _lotsError;
 
-  bool get _isCuttingMaster => widget.data.normalizedRole == 'cutting_master';
+  bool get _isCuttingMaster {
+    final normalizedRole = widget.data.normalizedRole;
+    if (normalizedRole == 'cutting_master') {
+      return true;
+    }
+
+    final rawRole = widget.data.role.toLowerCase();
+    return normalizedRole.contains('cutting') || rawRole.contains('cutting');
+  }
 
   int get _bundleSize => int.tryParse(_bundleSizeCtrl.text.trim()) ?? 0;
 
