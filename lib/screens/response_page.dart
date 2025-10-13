@@ -1005,7 +1005,6 @@ class _LotInfoCard extends StatefulWidget {
 }
 
 class _LotInfoCardState extends State<_LotInfoCard> {
-  final GlobalKey<FormFieldState<String>> _fabricFieldKey = GlobalKey<FormFieldState<String>>();
   late final TextEditingController _fabricCtrl;
   late final FocusNode _fabricFocus;
 
@@ -1022,12 +1021,11 @@ class _LotInfoCardState extends State<_LotInfoCard> {
     if ((widget.selectedFabric ?? '') != (oldWidget.selectedFabric ?? '')) {
       final updatedValue = widget.selectedFabric ?? '';
       if (_fabricCtrl.text != updatedValue) {
-        _fabricCtrl.text = updatedValue;
+        _fabricCtrl.value = TextEditingValue(
+          text: updatedValue,
+          selection: TextSelection.collapsed(offset: updatedValue.length),
+        );
       }
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _fabricFieldKey.currentState?.didChange(updatedValue);
-      });
     }
   }
 
@@ -1077,101 +1075,90 @@ class _LotInfoCardState extends State<_LotInfoCard> {
               },
             ),
             const SizedBox(height: 16),
-            FormField<String>(
-              key: _fabricFieldKey,
-              initialValue: widget.selectedFabric ?? '',
-              validator: (_) {
-                final value = _fabricCtrl.text.trim();
-                if (value.isEmpty) {
-                  return 'Select a fabric type.';
-                }
-                if (!widget.fabricTypes.contains(value)) {
-                  return 'Choose a fabric from the list.';
-                }
-                return null;
+            RawAutocomplete<String>(
+              focusNode: _fabricFocus,
+              textEditingController: _fabricCtrl,
+              optionsBuilder: _fabricOptionsBuilder,
+              displayStringForOption: (option) => option,
+              onSelected: (option) {
+                _fabricCtrl.value = TextEditingValue(
+                  text: option,
+                  selection: TextSelection.collapsed(offset: option.length),
+                );
+                widget.onFabricChanged(option);
               },
-              builder: (state) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    RawAutocomplete<String>(
-                      focusNode: _fabricFocus,
-                      textEditingController: _fabricCtrl,
-                      optionsBuilder: _fabricOptionsBuilder,
-                      displayStringForOption: (option) => option,
-                      onSelected: (option) {
-                        _fabricCtrl.text = option;
-                        state.didChange(option);
-                        widget.onFabricChanged(option);
-                      },
-                      fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
-                        return ValueListenableBuilder<TextEditingValue>(
-                          valueListenable: controller,
-                          builder: (context, value, _) {
-                            return TextField(
-                              controller: controller,
-                              focusNode: focusNode,
-                              decoration: InputDecoration(
-                                labelText: 'Fabric type',
-                                errorText: state.errorText,
-                                suffixIcon: value.text.isEmpty
-                                    ? null
-                                    : IconButton(
-                                        tooltip: 'Clear selection',
-                                        icon: const Icon(Icons.clear),
-                                        onPressed: () {
-                                          controller.clear();
-                                          state.didChange('');
-                                          widget.onFabricChanged(null);
-                                        },
-                                      ),
-                              ),
-                              onChanged: (text) {
-                                state.didChange(text);
-                                final trimmed = text.trim();
-                                if (trimmed.isEmpty) {
-                                  if (widget.selectedFabric != null) {
-                                    widget.onFabricChanged(null);
-                                  }
-                                } else if (widget.selectedFabric != null && widget.selectedFabric != trimmed) {
+              fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+                return ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: controller,
+                  builder: (context, value, _) {
+                    return TextFormField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      decoration: InputDecoration(
+                        labelText: 'Fabric type',
+                        suffixIcon: value.text.isEmpty
+                            ? null
+                            : IconButton(
+                                tooltip: 'Clear selection',
+                                icon: const Icon(Icons.clear),
+                                onPressed: () {
+                                  controller.clear();
                                   widget.onFabricChanged(null);
-                                }
-                              },
-                              onSubmitted: (text) {
-                                final trimmed = text.trim();
-                                if (widget.fabricTypes.contains(trimmed)) {
-                                  widget.onFabricChanged(trimmed);
-                                }
-                              },
-                            );
-                          },
-                        );
-                      },
-                      optionsViewBuilder: (context, onSelected, options) {
-                        return Align(
-                          alignment: Alignment.topLeft,
-                          child: Material(
-                            elevation: 4,
-                            child: SizedBox(
-                              height: 200,
-                              width: 320,
-                              child: ListView.builder(
-                                padding: EdgeInsets.zero,
-                                itemCount: options.length,
-                                itemBuilder: (context, index) {
-                                  final option = options.elementAt(index);
-                                  return ListTile(
-                                    title: Text(option),
-                                    onTap: () => onSelected(option),
-                                  );
                                 },
                               ),
-                            ),
-                          ),
-                        );
+                      ),
+                      validator: (text) {
+                        final trimmed = text?.trim() ?? '';
+                        if (trimmed.isEmpty) {
+                          return 'Select a fabric type.';
+                        }
+                        if (!widget.fabricTypes.contains(trimmed)) {
+                          return 'Choose a fabric from the list.';
+                        }
+                        return null;
                       },
+                      onChanged: (text) {
+                        final trimmed = text.trim();
+                        if (trimmed.isEmpty) {
+                          if (widget.selectedFabric != null) {
+                            widget.onFabricChanged(null);
+                          }
+                        } else if (widget.selectedFabric != null && widget.selectedFabric != trimmed) {
+                          widget.onFabricChanged(null);
+                        }
+                      },
+                      onFieldSubmitted: (text) {
+                        onFieldSubmitted();
+                        final trimmed = text.trim();
+                        if (widget.fabricTypes.contains(trimmed)) {
+                          widget.onFabricChanged(trimmed);
+                        }
+                      },
+                    );
+                  },
+                );
+              },
+              optionsViewBuilder: (context, onSelected, options) {
+                return Align(
+                  alignment: Alignment.topLeft,
+                  child: Material(
+                    elevation: 4,
+                    child: SizedBox(
+                      height: 200,
+                      width: 320,
+                      child: ListView.builder(
+                        padding: EdgeInsets.zero,
+                        itemCount: options.length,
+                        itemBuilder: (context, index) {
+                          final option = options.elementAt(index);
+                          return ListTile(
+                            title: Text(option),
+                            onTap: () => onSelected(option),
+                          );
+                        },
+                      ),
                     ),
-                  ],
+                  ),
                 );
               },
             ),
