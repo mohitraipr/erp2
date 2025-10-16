@@ -28,14 +28,17 @@ class ApiLotSummary {
       createdAt = DateTime.tryParse(createdValue);
     }
 
-    final idValue = json['id'] ?? json['lotId'] ?? json['lot_id'] ?? 0;
+    final idValue =
+        json['id'] ?? json['lotId'] ?? json['lot_id'] ?? json['lotID'] ?? 0;
     final intId = idValue is num
         ? idValue.toInt()
         : int.tryParse(idValue.toString()) ?? 0;
 
     return ApiLotSummary(
       id: intId,
-      lotNumber: (json['lotNumber'] ?? json['lot_number'] ?? '') as String,
+      lotNumber:
+          (json['lotNumber'] ?? json['lot_number'] ?? json['lotNo'] ?? json['lot_no'] ?? '')
+              as String,
       sku: (json['sku'] ?? '') as String,
       fabricType: (json['fabricType'] ?? json['fabric_type'] ?? '') as String,
       bundleSize: _readInt(json['bundleSize'] ?? json['bundle_size']),
