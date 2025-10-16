@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-
 import '../models/api_lot.dart';
 import '../models/fabric_roll.dart';
 import '../models/login_response.dart';
@@ -154,7 +153,9 @@ const List<String> _allSizeOptions = [
 class _ResponsePageState extends State<ResponsePage> {
   final GlobalKey<FormState> _lotFormKey = GlobalKey<FormState>();
   final TextEditingController _skuCtrl = TextEditingController();
-  final TextEditingController _bundleSizeCtrl = TextEditingController(text: '12');
+  final TextEditingController _bundleSizeCtrl = TextEditingController(
+    text: '12',
+  );
   final TextEditingController _remarkCtrl = TextEditingController();
   TextEditingController? _rollCtrl;
 
@@ -184,25 +185,23 @@ class _ResponsePageState extends State<ResponsePage> {
 
   int get _bundleSize => int.tryParse(_bundleSizeCtrl.text.trim()) ?? 0;
 
-  int get _totalLayers => _selectedRolls.fold<int>(
-        0,
-        (sum, item) => sum + (item.layers ?? 0),
-      );
+  int get _totalLayers =>
+      _selectedRolls.fold<int>(0, (sum, item) => sum + (item.layers ?? 0));
 
   int get _totalPieces => _sizes.fold<int>(
-        0,
-        (sum, item) => sum + (item.totalPieces(_totalLayers) ?? 0),
-      );
+    0,
+    (sum, item) => sum + (item.totalPieces(_totalLayers) ?? 0),
+  );
 
   int get _totalBundles => _sizes.fold<int>(
-        0,
-        (sum, item) => sum + item.bundleCount(_bundleSize, _totalLayers),
-      );
+    0,
+    (sum, item) => sum + item.bundleCount(_bundleSize, _totalLayers),
+  );
 
   double get _totalWeightUsed => _selectedRolls.fold<double>(
-        0,
-        (sum, item) => sum + (item.weightUsed ?? 0),
-      );
+    0,
+    (sum, item) => sum + (item.weightUsed ?? 0),
+  );
 
   @override
   void initState() {
@@ -372,11 +371,13 @@ class _ResponsePageState extends State<ResponsePage> {
 
     final sizePayload = _sizes.map((e) => e.toPayload()).toList();
     final rollPayload = _selectedRolls
-        .map((e) => {
-              'rollNo': e.roll.rollNo,
-              'weightUsed': e.weightUsed,
-              'layers': e.layers,
-            })
+        .map(
+          (e) => {
+            'rollNo': e.roll.rollNo,
+            'weightUsed': e.weightUsed,
+            'layers': e.layers,
+          },
+        )
         .toList();
 
     setState(() => _creatingLot = true);
@@ -385,7 +386,9 @@ class _ResponsePageState extends State<ResponsePage> {
         sku: _skuCtrl.text.trim(),
         fabricType: _selectedFabric!,
         bundleSize: _bundleSize,
-        remark: _remarkCtrl.text.trim().isEmpty ? null : _remarkCtrl.text.trim(),
+        remark: _remarkCtrl.text.trim().isEmpty
+            ? null
+            : _remarkCtrl.text.trim(),
         sizes: sizePayload,
         rolls: rollPayload,
       );
@@ -404,9 +407,9 @@ class _ResponsePageState extends State<ResponsePage> {
       await _loadMyLots();
     } on ApiException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.message)));
     } finally {
       if (mounted) {
         setState(() => _creatingLot = false);
@@ -450,7 +453,9 @@ class _ResponsePageState extends State<ResponsePage> {
           context: context,
           builder: (context) {
             return AlertDialog(
-              title: Text('Download ${type == LotCsvType.bundles ? 'Bundle' : 'Piece'} CSV'),
+              title: Text(
+                'Download ${type == LotCsvType.bundles ? 'Bundle' : 'Piece'} CSV',
+              ),
               content: SizedBox(
                 width: 420,
                 child: Column(
@@ -461,9 +466,7 @@ class _ResponsePageState extends State<ResponsePage> {
                     const SizedBox(height: 12),
                     SizedBox(
                       height: 200,
-                      child: SingleChildScrollView(
-                        child: SelectableText(csv),
-                      ),
+                      child: SingleChildScrollView(child: SelectableText(csv)),
                     ),
                   ],
                 ),
@@ -490,9 +493,9 @@ class _ResponsePageState extends State<ResponsePage> {
       }
     } on ApiException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.message)));
     }
   }
 
@@ -523,16 +526,16 @@ class _ResponsePageState extends State<ResponsePage> {
     } on ApiException catch (e) {
       if (!mounted) return;
       Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.message)));
     }
   }
 
   void _logout() {
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const LoginPage()),
-    );
+    Navigator.of(
+      context,
+    ).pushReplacement(MaterialPageRoute(builder: (_) => const LoginPage()));
   }
 
   @override
@@ -581,10 +584,7 @@ class _ResponsePageState extends State<ResponsePage> {
           ),
         ),
         body: TabBarView(
-          children: [
-            _buildCreateLotTab(context),
-            _buildMyLotsTab(context),
-          ],
+          children: [_buildCreateLotTab(context), _buildMyLotsTab(context)],
         ),
       ),
     );
@@ -629,10 +629,7 @@ class _ResponsePageState extends State<ResponsePage> {
       return const Center(child: CircularProgressIndicator());
     }
     if (_rollsError != null && _rollsByType.isEmpty) {
-      return _ErrorState(
-        message: _rollsError!,
-        onRetry: _loadRolls,
-      );
+      return _ErrorState(message: _rollsError!, onRetry: _loadRolls);
     }
 
     final fabricTypes = _rollsByType.keys.toList()..sort();
@@ -685,7 +682,9 @@ class _ResponsePageState extends State<ResponsePage> {
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.playlist_add_check),
-                      label: Text(_creatingLot ? 'Creating lot…' : 'Create lot'),
+                      label: Text(
+                        _creatingLot ? 'Creating lot…' : 'Create lot',
+                      ),
                       onPressed: _creatingLot ? null : _createLot,
                     ),
                   ),
@@ -721,7 +720,9 @@ class _ResponsePageState extends State<ResponsePage> {
           children: [
             Text(
               'Hello, ${widget.data.username}',
-              style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
             ),
             const SizedBox(height: 8),
             Text(
@@ -752,7 +753,9 @@ class _ResponsePageState extends State<ResponsePage> {
                     children: [
                       Text(
                         'Size breakdown',
-                        style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                       const SizedBox(height: 4),
                       Text(
@@ -812,7 +815,9 @@ class _ResponsePageState extends State<ResponsePage> {
           children: [
             Text(
               'Fabric rolls',
-              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const SizedBox(height: 4),
             Text(
@@ -829,21 +834,24 @@ class _ResponsePageState extends State<ResponsePage> {
                 }
                 final query = value.text.toLowerCase();
                 if (query.isEmpty) return rolls;
-                return rolls.where((roll) => roll.rollNo.toLowerCase().contains(query));
-              },
-              displayStringForOption: (option) => option.rollNo,
-              fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
-                _rollCtrl = controller;
-                return TextField(
-                  controller: controller,
-                  focusNode: focusNode,
-                  enabled: _selectedFabric != null,
-                  decoration: const InputDecoration(
-                    labelText: 'Search roll number',
-                    prefixIcon: Icon(Icons.qr_code_scanner),
-                  ),
+                return rolls.where(
+                  (roll) => roll.rollNo.toLowerCase().contains(query),
                 );
               },
+              displayStringForOption: (option) => option.rollNo,
+              fieldViewBuilder:
+                  (context, controller, focusNode, onFieldSubmitted) {
+                    _rollCtrl = controller;
+                    return TextField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      enabled: _selectedFabric != null,
+                      decoration: const InputDecoration(
+                        labelText: 'Search roll number',
+                        prefixIcon: Icon(Icons.qr_code_scanner),
+                      ),
+                    );
+                  },
               optionsViewBuilder: (context, onSelected, options) {
                 return Align(
                   alignment: Alignment.topLeft,
@@ -873,10 +881,7 @@ class _ResponsePageState extends State<ResponsePage> {
             ),
             const SizedBox(height: 16),
             if (_selectedRolls.isEmpty)
-              Text(
-                'No rolls selected yet.',
-                style: theme.textTheme.bodySmall,
-              ),
+              Text('No rolls selected yet.', style: theme.textTheme.bodySmall),
             if (_selectedRolls.isNotEmpty)
               ListView.separated(
                 shrinkWrap: true,
@@ -941,10 +946,7 @@ class _ResponsePageState extends State<ResponsePage> {
       return const Center(child: CircularProgressIndicator());
     }
     if (_lotsError != null && _myLots.isEmpty) {
-      return _ErrorState(
-        message: _lotsError!,
-        onRetry: _loadMyLots,
-      );
+      return _ErrorState(message: _lotsError!, onRetry: _loadMyLots);
     }
 
     return RefreshIndicator(
@@ -1057,7 +1059,9 @@ class _LotInfoCardState extends State<_LotInfoCard> {
           children: [
             Text(
               'Lot information',
-              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const SizedBox(height: 16),
             TextFormField(
@@ -1087,57 +1091,59 @@ class _LotInfoCardState extends State<_LotInfoCard> {
                 );
                 widget.onFabricChanged(option);
               },
-              fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
-                return ValueListenableBuilder<TextEditingValue>(
-                  valueListenable: controller,
-                  builder: (context, value, _) {
-                    return TextFormField(
-                      controller: controller,
-                      focusNode: focusNode,
-                      decoration: InputDecoration(
-                        labelText: 'Fabric type',
-                        suffixIcon: value.text.isEmpty
-                            ? null
-                            : IconButton(
-                                tooltip: 'Clear selection',
-                                icon: const Icon(Icons.clear),
-                                onPressed: () {
-                                  controller.clear();
-                                  widget.onFabricChanged(null);
-                                },
-                              ),
-                      ),
-                      validator: (text) {
-                        final trimmed = text?.trim() ?? '';
-                        if (trimmed.isEmpty) {
-                          return 'Select a fabric type.';
-                        }
-                        if (!widget.fabricTypes.contains(trimmed)) {
-                          return 'Choose a fabric from the list.';
-                        }
-                        return null;
-                      },
-                      onChanged: (text) {
-                        final trimmed = text.trim();
-                        if (trimmed.isEmpty) {
-                          if (widget.selectedFabric != null) {
-                            widget.onFabricChanged(null);
-                          }
-                        } else if (widget.selectedFabric != null && widget.selectedFabric != trimmed) {
-                          widget.onFabricChanged(null);
-                        }
-                      },
-                      onFieldSubmitted: (text) {
-                        onFieldSubmitted();
-                        final trimmed = text.trim();
-                        if (widget.fabricTypes.contains(trimmed)) {
-                          widget.onFabricChanged(trimmed);
-                        }
+              fieldViewBuilder:
+                  (context, controller, focusNode, onFieldSubmitted) {
+                    return ValueListenableBuilder<TextEditingValue>(
+                      valueListenable: controller,
+                      builder: (context, value, _) {
+                        return TextFormField(
+                          controller: controller,
+                          focusNode: focusNode,
+                          decoration: InputDecoration(
+                            labelText: 'Fabric type',
+                            suffixIcon: value.text.isEmpty
+                                ? null
+                                : IconButton(
+                                    tooltip: 'Clear selection',
+                                    icon: const Icon(Icons.clear),
+                                    onPressed: () {
+                                      controller.clear();
+                                      widget.onFabricChanged(null);
+                                    },
+                                  ),
+                          ),
+                          validator: (text) {
+                            final trimmed = text?.trim() ?? '';
+                            if (trimmed.isEmpty) {
+                              return 'Select a fabric type.';
+                            }
+                            if (!widget.fabricTypes.contains(trimmed)) {
+                              return 'Choose a fabric from the list.';
+                            }
+                            return null;
+                          },
+                          onChanged: (text) {
+                            final trimmed = text.trim();
+                            if (trimmed.isEmpty) {
+                              if (widget.selectedFabric != null) {
+                                widget.onFabricChanged(null);
+                              }
+                            } else if (widget.selectedFabric != null &&
+                                widget.selectedFabric != trimmed) {
+                              widget.onFabricChanged(null);
+                            }
+                          },
+                          onFieldSubmitted: (text) {
+                            onFieldSubmitted();
+                            final trimmed = text.trim();
+                            if (widget.fabricTypes.contains(trimmed)) {
+                              widget.onFabricChanged(trimmed);
+                            }
+                          },
+                        );
                       },
                     );
                   },
-                );
-              },
               optionsViewBuilder: (context, onSelected, options) {
                 return Align(
                   alignment: Alignment.topLeft,
@@ -1217,7 +1223,8 @@ class _SizeEntryCard extends StatefulWidget {
 }
 
 class _SizeEntryCardState extends State<_SizeEntryCard> {
-  final GlobalKey<FormFieldState<String>> _sizeFieldKey = GlobalKey<FormFieldState<String>>();
+  final GlobalKey<FormFieldState<String>> _sizeFieldKey =
+      GlobalKey<FormFieldState<String>>();
   late final FocusNode _sizeFocus;
 
   @override
@@ -1249,7 +1256,9 @@ class _SizeEntryCardState extends State<_SizeEntryCard> {
     if (query.isEmpty) {
       return _allSizeOptions;
     }
-    return _allSizeOptions.where((option) => option.toLowerCase().contains(query));
+    return _allSizeOptions.where(
+      (option) => option.toLowerCase().contains(query),
+    );
   }
 
   @override
@@ -1267,7 +1276,10 @@ class _SizeEntryCardState extends State<_SizeEntryCard> {
         children: [
           Row(
             children: [
-              Text('Size ${widget.index + 1}', style: theme.textTheme.titleSmall),
+              Text(
+                'Size ${widget.index + 1}',
+                style: theme.textTheme.titleSmall,
+              ),
               const Spacer(),
               if (widget.canRemove)
                 IconButton(
@@ -1300,19 +1312,20 @@ class _SizeEntryCardState extends State<_SizeEntryCard> {
                       widget.entry.sizeCtrl.text = option;
                       state.didChange(option);
                     },
-                    fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
-                      return TextField(
-                        controller: controller,
-                        focusNode: focusNode,
-                        textInputAction: TextInputAction.next,
-                        decoration: InputDecoration(
-                          labelText: 'Size label',
-                          hintText: 'e.g. M, 32, 10',
-                          errorText: state.errorText,
-                        ),
-                        onChanged: state.didChange,
-                      );
-                    },
+                    fieldViewBuilder:
+                        (context, controller, focusNode, onFieldSubmitted) {
+                          return TextField(
+                            controller: controller,
+                            focusNode: focusNode,
+                            textInputAction: TextInputAction.next,
+                            decoration: InputDecoration(
+                              labelText: 'Size label',
+                              hintText: 'e.g. M, 32, 10',
+                              errorText: state.errorText,
+                            ),
+                            onChanged: state.didChange,
+                          );
+                        },
                     optionsViewBuilder: (context, onSelected, options) {
                       return Align(
                         alignment: Alignment.topLeft,
@@ -1345,9 +1358,7 @@ class _SizeEntryCardState extends State<_SizeEntryCard> {
           TextFormField(
             controller: widget.entry.patternCtrl,
             keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'Pattern count',
-            ),
+            decoration: const InputDecoration(labelText: 'Pattern count'),
             validator: (value) {
               final parsed = int.tryParse(value ?? '');
               if (parsed == null || parsed <= 0) {
@@ -1370,7 +1381,10 @@ class _SizeEntryCardState extends State<_SizeEntryCard> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _MiniInfo(label: 'Total pieces', value: widget.pieces?.toString() ?? '—'),
+              _MiniInfo(
+                label: 'Total pieces',
+                value: widget.pieces?.toString() ?? '—',
+              ),
               _MiniInfo(
                 label: 'Bundles',
                 value: widget.bundles > 0 ? widget.bundles.toString() : '—',
@@ -1399,7 +1413,10 @@ class _MaxWeightInputFormatter extends TextInputFormatter {
   }
 
   @override
-  TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
     final text = newValue.text;
     if (text.isEmpty) {
       return newValue;
@@ -1454,7 +1471,9 @@ class _RollCard extends StatelessWidget {
                   children: [
                     Text(
                       'Roll ${selection.roll.rollNo}',
-                      style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -1477,13 +1496,13 @@ class _RollCard extends StatelessWidget {
               Expanded(
                 child: TextFormField(
                   controller: selection.weightCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   inputFormatters: [
                     _MaxWeightInputFormatter(selection.roll.perRollWeight),
                   ],
-                  decoration: const InputDecoration(
-                    labelText: 'Weight used',
-                  ),
+                  decoration: const InputDecoration(labelText: 'Weight used'),
                 ),
               ),
               const SizedBox(width: 12),
@@ -1492,9 +1511,7 @@ class _RollCard extends StatelessWidget {
                   controller: selection.layersCtrl,
                   keyboardType: TextInputType.number,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: const InputDecoration(
-                    labelText: 'Layers cut',
-                  ),
+                  decoration: const InputDecoration(labelText: 'Layers cut'),
                 ),
               ),
             ],
@@ -1526,14 +1543,15 @@ class _SummaryTile extends StatelessWidget {
       children: [
         CircleAvatar(
           radius: 22,
-          backgroundColor:
-              theme.colorScheme.primary.withValues(alpha: 0.1),
+          backgroundColor: theme.colorScheme.primary.withValues(alpha: 0.1),
           child: Icon(icon, color: theme.colorScheme.primary),
         ),
         const SizedBox(height: 8),
         Text(
           '$value${suffix != null ? ' $suffix' : ''}',
-          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
         ),
         Text(label, style: theme.textTheme.bodySmall),
       ],
@@ -1567,10 +1585,16 @@ class _LotCard extends StatelessWidget {
               children: [
                 Text(
                   'Lot ${lot.lotNumber}',
-                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
                 const SizedBox(width: 12),
-                Chip(label: Text(lot.fabricType.isEmpty ? 'Fabric' : lot.fabricType)),
+                Chip(
+                  label: Text(
+                    lot.fabricType.isEmpty ? 'Fabric' : lot.fabricType,
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -1698,9 +1722,9 @@ class _SizeTable extends StatelessWidget {
               Theme.of(context).colorScheme.primary.withValues(alpha: 0.08),
         ),
         columns: const [
-          DataColumn(label: Text('Size')), 
-          DataColumn(label: Text('Pattern')), 
-          DataColumn(label: Text('Pieces')), 
+          DataColumn(label: Text('Size')),
+          DataColumn(label: Text('Pattern')),
+          DataColumn(label: Text('Pieces')),
           DataColumn(label: Text('Bundles')),
         ],
         rows: sizes
@@ -1765,7 +1789,9 @@ class _MiniInfo extends StatelessWidget {
         Text(label, style: theme.textTheme.bodySmall),
         Text(
           value,
-          style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
         ),
       ],
     );
@@ -1776,7 +1802,11 @@ class LotDetailSheet extends StatelessWidget {
   final ApiLot lot;
   final ValueChanged<LotCsvType> onDownload;
 
-  const LotDetailSheet({super.key, required this.lot, required this.onDownload});
+  const LotDetailSheet({
+    super.key,
+    required this.lot,
+    required this.onDownload,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1798,7 +1828,9 @@ class LotDetailSheet extends StatelessWidget {
                   Expanded(
                     child: Text(
                       'Lot ${lot.lotNumber}',
-                      style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                      style: theme.textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                   IconButton(
