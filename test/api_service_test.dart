@@ -63,5 +63,52 @@ void main() {
       expect(lots.single.lotNumber, 'LOT-007');
       expect(lots.single.fabricType, 'Polyester');
     });
+
+    test('extracts lots from deeply nested payloads without duplication', () async {
+      final client = MockClient((request) async {
+        final body = jsonEncode({
+          'meta': {'status': 'ok'},
+          'data': {
+            'result': {
+              'items': [
+                {
+                  'lotID': '42',
+                  'lot_no': 'LOT-042',
+                  'sku': 'SKU-420',
+                  'fabric_type': 'Denim',
+                },
+                {
+                  'lot_id': 99,
+                  'lotNo': 'LOT-099',
+                  'sku': 'SKU-990',
+                  'fabricType': 'Linen',
+                },
+              ],
+              'pagination': {'page': 1, 'size': 25},
+            },
+            'summary': {
+              'count': 2,
+              'lots': [
+                {
+                  // Duplicate of LOT-042 should be ignored by fingerprint.
+                  'lotID': '42',
+                  'lot_no': 'LOT-042',
+                  'sku': 'SKU-420',
+                  'fabric_type': 'Denim',
+                }
+              ],
+            },
+          },
+        });
+
+        return http.Response(body, 200);
+      });
+
+      final api = ApiService(client: client);
+      final lots = await api.fetchMyLots();
+
+      expect(lots, hasLength(2));
+      expect(lots.map((e) => e.lotNumber), containsAllInOrder(['LOT-042', 'LOT-099']));
+    });
   });
 }

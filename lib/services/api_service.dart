@@ -348,33 +348,80 @@ class ApiService {
   }
 
   static List<ApiLotSummary> _parseLotSummaries(dynamic decoded) {
-    Iterable<Map<dynamic, dynamic>> rawList = const [];
+    final results = <ApiLotSummary>[];
+    final seen = <String>{};
 
-    if (decoded is Iterable) {
-      rawList = decoded.whereType<Map<dynamic, dynamic>>();
-    } else if (decoded is Map) {
-      final map = decoded as Map;
-      final lotsValue = map['lots'] ?? map['data'];
+    void walk(dynamic value) {
+      if (value is Iterable) {
+        for (final element in value) {
+          walk(element);
+        }
+        return;
+      }
 
-      if (lotsValue is Iterable) {
-        rawList = lotsValue.whereType<Map<dynamic, dynamic>>();
-      } else if (lotsValue is Map) {
-        rawList = (lotsValue as Map)
-            .values
-            .whereType<Iterable>()
-            .expand((element) => element)
-            .whereType<Map<dynamic, dynamic>>();
-      } else {
-        rawList = map.values
-            .whereType<Iterable>()
-            .expand((element) => element)
-            .whereType<Map<dynamic, dynamic>>();
+      if (value is Map) {
+        final map = <String, dynamic>{};
+        value.forEach((key, dynamic v) {
+          if (key is String) {
+            map[key] = v;
+          }
+        });
+
+        if (_looksLikeLotSummary(map)) {
+          final fingerprint = _lotFingerprint(map);
+          if (fingerprint == null || seen.add(fingerprint)) {
+            results.add(ApiLotSummary.fromJson(map));
+          }
+        }
+
+        for (final child in value.values) {
+          walk(child);
+        }
       }
     }
 
-    return rawList
-        .map((e) => ApiLotSummary.fromJson(Map<String, dynamic>.from(e)))
-        .toList();
+    walk(decoded);
+    return results;
+  }
+
+  static bool _looksLikeLotSummary(Map<String, dynamic> json) {
+    if (json.isEmpty) return false;
+
+    final hasLotNumber = json.containsKey('lotNumber') ||
+        json.containsKey('lot_number') ||
+        json.containsKey('lotNo') ||
+        json.containsKey('lot_no');
+    if (!hasLotNumber) return false;
+
+    final hasSku = json.containsKey('sku');
+    final hasFabric = json.containsKey('fabricType') || json.containsKey('fabric_type');
+    final hasId = json.containsKey('id') ||
+        json.containsKey('lotId') ||
+        json.containsKey('lot_id') ||
+        json.containsKey('lotID');
+
+    return hasSku || hasFabric || hasId;
+  }
+
+  static String? _lotFingerprint(Map<String, dynamic> json) {
+    final id = json['id'] ?? json['lotId'] ?? json['lot_id'] ?? json['lotID'];
+    if (id != null) {
+      return 'id:$id';
+    }
+
+    final lotNumber =
+        json['lotNumber'] ?? json['lot_number'] ?? json['lotNo'] ?? json['lot_no'];
+    if (lotNumber != null) {
+      return 'lot:$lotNumber';
+    }
+
+    final sku = json['sku'];
+    final fabric = json['fabricType'] ?? json['fabric_type'];
+    if (sku != null || fabric != null) {
+      return 'sku:${sku ?? ''}|fabric:${fabric ?? ''}';
+    }
+
+    return null;
   }
 
   static Map<String, dynamic>? _tryParseJson(String raw) {
