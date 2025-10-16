@@ -210,59 +210,50 @@ class ApiService {
   }
 
   Future<List<ApiLotSummary>> fetchMyLots() async {
-    final uri = Uri.parse('$_baseUrl/api/lots');
-    try {
-      final res = await _client
-          .get(uri, headers: _authorizedHeaders())
-          .timeout(const Duration(seconds: 20));
+    final fallbackPaths = <String>['/api/lots', '/api/my-lots', '/api/lots/my'];
+    ApiException? notFoundError;
 
-      final status = res.statusCode;
-      final raw = _safeDecodeUtf8(res.bodyBytes);
-      final decoded = _tryDecodeJson(raw);
+    for (final path in fallbackPaths) {
+      final uri = Uri.parse('$_baseUrl$path');
+      try {
+        final res = await _client
+            .get(uri, headers: _authorizedHeaders())
+            .timeout(const Duration(seconds: 20));
 
-      if (status >= 200 && status < 300 && decoded != null) {
-        Iterable<dynamic> rawList = const [];
-        if (decoded is Iterable) {
-          rawList = decoded;
-        } else if (decoded is Map<String, dynamic>) {
-          final lotsValue = decoded['lots'] ?? decoded['data'];
-          if (lotsValue is Iterable) {
-            rawList = lotsValue;
-          } else if (lotsValue is Map) {
-            rawList = (lotsValue as Map)
-                .values
-                .whereType<Iterable>()
-                .expand((element) => element);
-          } else {
-            rawList = decoded.values
-                .whereType<Iterable>()
-                .expand((element) => element);
-          }
+        final status = res.statusCode;
+        final raw = _safeDecodeUtf8(res.bodyBytes);
+        final decoded = _tryDecodeJson(raw);
+
+        if (status >= 200 && status < 300 && decoded != null) {
+          return _parseLotSummaries(decoded);
         }
 
-        return rawList
-            .whereType<Map<dynamic, dynamic>>()
-            .map((e) =>
-                ApiLotSummary.fromJson(Map<String, dynamic>.from(e)))
-            .toList();
-      }
+        final msg = _extractMessage(decoded, raw) ??
+            'Failed to fetch lots (status: $status).';
+        debugPrint('fetchMyLots(${uri.path}) error [$status]: $raw');
 
-      final msg = _extractMessage(decoded, raw) ??
-          'Failed to fetch lots (status: $status).';
-      debugPrint('fetchMyLots() error [$status]: $raw');
-      throw ApiException(msg);
-    } on TimeoutException catch (e) {
-      debugPrint('fetchMyLots() timeout: $e');
-      throw ApiException('Request timed out. Check your connection.');
-    } on SocketException catch (e) {
-      debugPrint('fetchMyLots() network error: $e');
-      throw ApiException('No internet connection.');
-    } on ApiException {
-      rethrow;
-    } catch (e) {
-      debugPrint('fetchMyLots() unexpected error: $e');
-      throw ApiException('Unexpected error: $e');
+        if (status == 404 || status == 405) {
+          notFoundError = ApiException(msg);
+          continue;
+        }
+
+        throw ApiException(msg);
+      } on TimeoutException catch (e) {
+        debugPrint('fetchMyLots(${uri.path}) timeout: $e');
+        throw ApiException('Request timed out. Check your connection.');
+      } on SocketException catch (e) {
+        debugPrint('fetchMyLots(${uri.path}) network error: $e');
+        throw ApiException('No internet connection.');
+      } on ApiException {
+        rethrow;
+      } catch (e) {
+        debugPrint('fetchMyLots(${uri.path}) unexpected error: $e');
+        throw ApiException('Unexpected error: $e');
+      }
     }
+
+    debugPrint('fetchMyLots() exhausted fallbacks.');
+    throw notFoundError ?? ApiException('Failed to fetch lots.');
   }
 
   Future<ApiLot> fetchLotDetail(int lotId) async {
@@ -354,6 +345,36 @@ class ApiService {
     } catch (_) {
       return null;
     }
+  }
+
+  static List<ApiLotSummary> _parseLotSummaries(dynamic decoded) {
+    Iterable<Map<dynamic, dynamic>> rawList = const [];
+
+    if (decoded is Iterable) {
+      rawList = decoded.whereType<Map<dynamic, dynamic>>();
+    } else if (decoded is Map) {
+      final map = decoded as Map;
+      final lotsValue = map['lots'] ?? map['data'];
+
+      if (lotsValue is Iterable) {
+        rawList = lotsValue.whereType<Map<dynamic, dynamic>>();
+      } else if (lotsValue is Map) {
+        rawList = (lotsValue as Map)
+            .values
+            .whereType<Iterable>()
+            .expand((element) => element)
+            .whereType<Map<dynamic, dynamic>>();
+      } else {
+        rawList = map.values
+            .whereType<Iterable>()
+            .expand((element) => element)
+            .whereType<Map<dynamic, dynamic>>();
+      }
+    }
+
+    return rawList
+        .map((e) => ApiLotSummary.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
   }
 
   static Map<String, dynamic>? _tryParseJson(String raw) {
