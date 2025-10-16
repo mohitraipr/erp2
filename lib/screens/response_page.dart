@@ -174,7 +174,7 @@ class _ResponsePageState extends State<ResponsePage> {
 
   bool get _isCuttingMaster {
     final normalizedRole = widget.data.normalizedRole;
-    if (normalizedRole == 'cutting_master') {
+    if (normalizedRole == 'cutting_manager') {
       return true;
     }
 
