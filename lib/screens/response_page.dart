@@ -157,6 +157,7 @@ class _ResponsePageState extends State<ResponsePage> {
     text: '12',
   );
   final TextEditingController _remarkCtrl = TextEditingController();
+  final TextEditingController _lotSearchCtrl = TextEditingController();
   TextEditingController? _rollCtrl;
 
   final List<SizeEntryData> _sizes = [];
@@ -164,6 +165,7 @@ class _ResponsePageState extends State<ResponsePage> {
 
   Map<String, List<FabricRoll>> _rollsByType = {};
   List<ApiLotSummary> _myLots = [];
+  List<ApiLotSummary> _filteredLots = [];
   ApiLot? _recentLot;
 
   String? _selectedFabric;
@@ -207,6 +209,7 @@ class _ResponsePageState extends State<ResponsePage> {
   void initState() {
     super.initState();
     _bundleSizeCtrl.addListener(_onFormChanged);
+    _lotSearchCtrl.addListener(_onSearchFieldChanged);
     _addSizeEntry(notify: false);
     if (_isCuttingMaster) {
       _loadRolls();
@@ -221,6 +224,9 @@ class _ResponsePageState extends State<ResponsePage> {
       ..removeListener(_onFormChanged)
       ..dispose();
     _remarkCtrl.dispose();
+    _lotSearchCtrl
+      ..removeListener(_onSearchFieldChanged)
+      ..dispose();
     for (final size in _sizes) {
       size.dispose();
     }
@@ -262,6 +268,7 @@ class _ResponsePageState extends State<ResponsePage> {
       if (!mounted) return;
       setState(() {
         _myLots = lots;
+        _applyLotFilter(notify: false);
       });
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -294,6 +301,40 @@ class _ResponsePageState extends State<ResponsePage> {
     if (mounted) {
       setState(() {});
     }
+  }
+
+  void _onSearchFieldChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _applyLotFilter({bool notify = true}) {
+    final query = _lotSearchCtrl.text.trim().toLowerCase();
+    List<ApiLotSummary> filtered;
+    if (query.isEmpty) {
+      filtered = List<ApiLotSummary>.from(_myLots);
+    } else {
+      filtered = _myLots.where((lot) {
+        return lot.lotNumber.toLowerCase().contains(query) ||
+            lot.sku.toLowerCase().contains(query) ||
+            lot.fabricType.toLowerCase().contains(query);
+      }).toList();
+    }
+
+    if (notify) {
+      setState(() {
+        _filteredLots = filtered;
+      });
+    } else {
+      _filteredLots = filtered;
+    }
+  }
+
+  void _clearLotSearch() {
+    if (_lotSearchCtrl.text.isEmpty) return;
+    _lotSearchCtrl.clear();
+    _applyLotFilter();
   }
 
   void _onSelectRoll(FabricRoll roll) {
@@ -493,39 +534,6 @@ class _ResponsePageState extends State<ResponsePage> {
       }
     } on ApiException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(e.message)));
-    }
-  }
-
-  Future<void> _openLotDetail(ApiLotSummary summary) async {
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
-    try {
-      final detail = await widget.api.fetchLotDetail(summary.id);
-      if (!mounted) return;
-      Navigator.of(context).pop();
-      await showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        builder: (context) {
-          return LotDetailSheet(
-            lot: detail,
-            onDownload: (type) => _handleDownload(
-              lotId: detail.id,
-              lotNumber: detail.lotNumber,
-              type: type,
-            ),
-          );
-        },
-      );
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      Navigator.of(context).pop();
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(e.message)));
@@ -941,6 +949,77 @@ class _ResponsePageState extends State<ResponsePage> {
     );
   }
 
+  Widget _buildLotSearchCard(BuildContext context) {
+    final theme = Theme.of(context);
+    final query = _lotSearchCtrl.text.trim();
+    final hasQuery = query.isNotEmpty;
+    final results = _filteredLots.length;
+    final totalLots = _myLots.length;
+    final statusText = hasQuery
+        ? (results == 0
+            ? 'No lots match "$query".'
+            : '$results result${results == 1 ? '' : 's'} match "$query".')
+        : 'Viewing $totalLots lot${totalLots == 1 ? '' : 's'}.';
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Search lots',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Find a lot by lot number, SKU, or fabric type.',
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _lotSearchCtrl,
+                    textInputAction: TextInputAction.search,
+                    decoration: InputDecoration(
+                      labelText: 'Search lots',
+                      prefixIcon: const Icon(Icons.search),
+                      suffixIcon: hasQuery
+                          ? IconButton(
+                              tooltip: 'Clear search',
+                              icon: const Icon(Icons.close),
+                              onPressed: _clearLotSearch,
+                            )
+                          : null,
+                    ),
+                    onSubmitted: (_) => _applyLotFilter(),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                FilledButton.icon(
+                  icon: const Icon(Icons.manage_search),
+                  label: const Text('Search'),
+                  onPressed: () => _applyLotFilter(),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              statusText,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildMyLotsTab(BuildContext context) {
     if (_loadingLots && _myLots.isEmpty) {
       return const Center(child: CircularProgressIndicator());
@@ -949,37 +1028,53 @@ class _ResponsePageState extends State<ResponsePage> {
       return _ErrorState(message: _lotsError!, onRetry: _loadMyLots);
     }
 
+    final lots = _filteredLots;
     return RefreshIndicator(
       onRefresh: _loadMyLots,
-      child: ListView.builder(
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-        itemCount: _myLots.length + (_loadingLots ? 1 : 0),
-        itemBuilder: (context, index) {
-          if (index >= _myLots.length) {
-            return const Padding(
-              padding: EdgeInsets.all(16),
-              child: Center(child: CircularProgressIndicator()),
-            );
-          }
-          final lot = _myLots[index];
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: _LotCard(
-              lot: lot,
-              onViewDetail: () => _openLotDetail(lot),
-              onDownloadBundles: () => _handleDownload(
-                lotId: lot.id,
-                lotNumber: lot.lotNumber,
-                type: LotCsvType.bundles,
-              ),
-              onDownloadPieces: () => _handleDownload(
-                lotId: lot.id,
-                lotNumber: lot.lotNumber,
-                type: LotCsvType.pieces,
+        children: [
+          _buildLotSearchCard(context),
+          const SizedBox(height: 16),
+          if (_lotsError != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _InlineInfoBanner(
+                message: _lotsError!,
+                onRetry: _loadMyLots,
               ),
             ),
-          );
-        },
+          if (!_loadingLots && lots.isEmpty)
+            _EmptyLotsState(
+              query: _lotSearchCtrl.text.trim(),
+              onClear: _lotSearchCtrl.text.isNotEmpty ? _clearLotSearch : null,
+            ),
+          for (final lot in lots)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: _LotCard(
+                lot: lot,
+                onDownloadBundles: () => _handleDownload(
+                  lotId: lot.id,
+                  lotNumber: lot.lotNumber,
+                  type: LotCsvType.bundles,
+                ),
+                onDownloadPieces: () => _handleDownload(
+                  lotId: lot.id,
+                  lotNumber: lot.lotNumber,
+                  type: LotCsvType.pieces,
+                ),
+              ),
+            ),
+          if (_loadingLots)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: CircularProgressIndicator(),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -1023,10 +1118,13 @@ class _LotInfoCardState extends State<_LotInfoCard> {
     if ((widget.selectedFabric ?? '') != (oldWidget.selectedFabric ?? '')) {
       final updatedValue = widget.selectedFabric ?? '';
       if (_fabricCtrl.text != updatedValue) {
-        _fabricCtrl.value = TextEditingValue(
-          text: updatedValue,
-          selection: TextSelection.collapsed(offset: updatedValue.length),
-        );
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _fabricCtrl.value = TextEditingValue(
+            text: updatedValue,
+            selection: TextSelection.collapsed(offset: updatedValue.length),
+          );
+        });
       }
     }
   }
@@ -1559,15 +1657,99 @@ class _SummaryTile extends StatelessWidget {
   }
 }
 
+class _InlineInfoBanner extends StatelessWidget {
+  final String message;
+  final Future<void> Function() onRetry;
+
+  const _InlineInfoBanner({required this.message, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.error.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: theme.colorScheme.error.withOpacity(0.2)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.error_outline, color: theme.colorScheme.error),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              message,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.error,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () => onRetry(),
+            child: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EmptyLotsState extends StatelessWidget {
+  final String query;
+  final VoidCallback? onClear;
+
+  const _EmptyLotsState({required this.query, this.onClear});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final hasQuery = query.isNotEmpty;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Icon(Icons.inbox_outlined, size: 40, color: theme.colorScheme.primary),
+            const SizedBox(height: 16),
+            Text(
+              hasQuery ? 'No matching lots' : 'No lots yet',
+              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              hasQuery
+                  ? 'Try refining your search or clear the filter to see all lots.'
+                  : 'Lots that you create will appear here with quick download actions.',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            if (hasQuery && onClear != null) ...[
+              const SizedBox(height: 16),
+              FilledButton.tonalIcon(
+                icon: const Icon(Icons.clear_all),
+                label: const Text('Clear search'),
+                onPressed: onClear,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _LotCard extends StatelessWidget {
   final ApiLotSummary lot;
-  final VoidCallback onViewDetail;
   final VoidCallback onDownloadBundles;
   final VoidCallback onDownloadPieces;
 
   const _LotCard({
     required this.lot,
-    required this.onViewDetail,
     required this.onDownloadBundles,
     required this.onDownloadPieces,
   });
@@ -1575,6 +1757,21 @@ class _LotCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final createdAt = lot.createdAt;
+    String? createdLabel;
+    if (createdAt != null) {
+      final local = createdAt.toLocal();
+      final twoDigits = (int value) => value.toString().padLeft(2, '0');
+      createdLabel =
+          '${local.day.toString().padLeft(2, '0')}-${twoDigits(local.month)}-${local.year} • ${twoDigits(local.hour)}:${twoDigits(local.minute)}';
+    }
+    final fabricLabel = lot.fabricType.isEmpty ? 'Fabric' : lot.fabricType;
+    final weightLabel = lot.totalWeight != null
+        ? lot.totalWeight!.toStringAsFixed(2)
+        : null;
+    final bundleSizeLabel = lot.bundleSize != null && lot.bundleSize! > 0
+        ? lot.bundleSize.toString()
+        : null;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -1582,6 +1779,7 @@ class _LotCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   'Lot ${lot.lotNumber}',
@@ -1589,12 +1787,16 @@ class _LotCard extends StatelessWidget {
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-                const SizedBox(width: 12),
-                Chip(
-                  label: Text(
-                    lot.fabricType.isEmpty ? 'Fabric' : lot.fabricType,
+                const Spacer(),
+                if (createdLabel != null)
+                  Text(
+                    createdLabel,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                   ),
-                ),
+                const SizedBox(width: 12),
+                Chip(label: Text(fabricLabel)),
               ],
             ),
             const SizedBox(height: 12),
@@ -1613,25 +1815,53 @@ class _LotCard extends StatelessWidget {
                   label: 'Bundles',
                   value: lot.totalBundles?.toString() ?? '—',
                 ),
-                _InfoRow(
-                  icon: Icons.scale,
-                  label: 'Weight',
-                  value: lot.totalWeight?.toStringAsFixed(2) ?? '—',
-                  suffix: 'kg',
-                ),
+                if (bundleSizeLabel != null)
+                  _InfoRow(
+                    icon: Icons.all_inbox,
+                    label: 'Bundle size',
+                    value: bundleSizeLabel,
+                  ),
+                if (weightLabel != null)
+                  _InfoRow(
+                    icon: Icons.scale,
+                    label: 'Weight',
+                    value: weightLabel,
+                    suffix: 'kg',
+                  ),
               ],
+            ),
+            const SizedBox(height: 16),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primary.withOpacity(0.06),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _MiniInfo(
+                      label: 'Total bundles',
+                      value: (lot.totalBundles ?? 0).toString(),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _MiniInfo(
+                      label: 'Pieces ready',
+                      value: (lot.totalPieces ?? 0).toString(),
+                    ),
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 16),
             Wrap(
               spacing: 12,
               runSpacing: 8,
               children: [
-                FilledButton.tonalIcon(
-                  icon: const Icon(Icons.visibility_outlined),
-                  label: const Text('View details'),
-                  onPressed: onViewDetail,
-                ),
-                OutlinedButton.icon(
+                FilledButton.icon(
                   icon: const Icon(Icons.download),
                   label: const Text('Bundle CSV'),
                   onPressed: onDownloadBundles,
@@ -1794,98 +2024,6 @@ class _MiniInfo extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class LotDetailSheet extends StatelessWidget {
-  final ApiLot lot;
-  final ValueChanged<LotCsvType> onDownload;
-
-  const LotDetailSheet({
-    super.key,
-    required this.lot,
-    required this.onDownload,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return SafeArea(
-      child: Padding(
-        padding: EdgeInsets.only(
-          left: 16,
-          right: 16,
-          top: 16,
-          bottom: MediaQuery.of(context).viewInsets.bottom + 16,
-        ),
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Lot ${lot.lotNumber}',
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 12,
-                runSpacing: 8,
-                children: [
-                  Chip(label: Text(lot.fabricType)),
-                  _InfoRow(icon: Icons.style, label: 'SKU', value: lot.sku),
-                  _InfoRow(
-                    icon: Icons.grid_view,
-                    label: 'Bundles',
-                    value: lot.totalBundles?.toString() ?? '—',
-                  ),
-                  _InfoRow(
-                    icon: Icons.view_module,
-                    label: 'Pieces',
-                    value: lot.totalPieces?.toString() ?? '—',
-                  ),
-                ],
-              ),
-              if (lot.remark != null && lot.remark!.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Text('Remarks', style: theme.textTheme.titleSmall),
-                Text(lot.remark!),
-              ],
-              const SizedBox(height: 16),
-              _SizeTable(sizes: lot.sizes),
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 12,
-                runSpacing: 8,
-                children: [
-                  FilledButton.icon(
-                    icon: const Icon(Icons.download),
-                    label: const Text('Bundle CSV'),
-                    onPressed: () => onDownload(LotCsvType.bundles),
-                  ),
-                  FilledButton.icon(
-                    icon: const Icon(Icons.download_for_offline),
-                    label: const Text('Piece CSV'),
-                    onPressed: () => onDownload(LotCsvType.pieces),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }
