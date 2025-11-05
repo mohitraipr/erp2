@@ -127,15 +127,15 @@ class ApiService {
           if (value is List) {
             data[key] = value
                 .whereType<Map>()
-                .map((e) =>
-                    FabricRoll.fromJson(Map<String, dynamic>.from(e)))
+                .map((e) => FabricRoll.fromJson(Map<String, dynamic>.from(e)))
                 .toList();
           }
         });
         return data;
       }
 
-      final msg = _extractMessage(json, raw) ??
+      final msg =
+          _extractMessage(json, raw) ??
           'Failed to fetch fabric rolls (status: $status).';
       debugPrint('fetchFabricRolls() error [$status]: $raw');
       throw ApiException(msg);
@@ -191,7 +191,8 @@ class ApiService {
         }
       }
 
-      final msg = _extractMessage(json, raw) ??
+      final msg =
+          _extractMessage(json, raw) ??
           'Failed to create lot (status: $status).';
       debugPrint('createLot() error [$status]: $raw');
       throw ApiException(msg);
@@ -210,7 +211,7 @@ class ApiService {
   }
 
   Future<List<ApiLotSummary>> fetchMyLots() async {
-    final fallbackPaths = <String>['/api/lots', '/api/my-lots', '/api/lots/my'];
+    final fallbackPaths = <String>['/api/lots'];
     ApiException? notFoundError;
 
     for (final path in fallbackPaths) {
@@ -228,7 +229,8 @@ class ApiService {
           return _parseLotSummaries(decoded);
         }
 
-        final msg = _extractMessage(decoded, raw) ??
+        final msg =
+            _extractMessage(decoded, raw) ??
             'Failed to fetch lots (status: $status).';
         debugPrint('fetchMyLots(${uri.path}) error [$status]: $raw');
 
@@ -271,7 +273,8 @@ class ApiService {
         return ApiLot.fromJson(json);
       }
 
-      final msg = _extractMessage(json, raw) ??
+      final msg =
+          _extractMessage(json, raw) ??
           'Failed to fetch lot $lotId (status: $status).';
       debugPrint('fetchLotDetail() error [$status]: $raw');
       throw ApiException(msg);
@@ -293,9 +296,7 @@ class ApiService {
     required int lotId,
     required LotCsvType type,
   }) async {
-    final path = type == LotCsvType.bundles
-        ? 'bundles'
-        : 'pieces';
+    final path = type == LotCsvType.bundles ? 'bundles' : 'pieces';
     final uri = Uri.parse('$_baseUrl/api/lots/$lotId/$path/download');
     try {
       final res = await _client
@@ -310,7 +311,8 @@ class ApiService {
       }
 
       final Map<String, dynamic>? json = _tryParseJson(raw);
-      final msg = _extractMessage(json, raw) ??
+      final msg =
+          _extractMessage(json, raw) ??
           'Failed to download ${type.name} CSV (status: $status).';
       debugPrint('downloadLotCsv() error [$status]: $raw');
       throw ApiException(msg);
@@ -387,15 +389,18 @@ class ApiService {
   static bool _looksLikeLotSummary(Map<String, dynamic> json) {
     if (json.isEmpty) return false;
 
-    final hasLotNumber = json.containsKey('lotNumber') ||
+    final hasLotNumber =
+        json.containsKey('lotNumber') ||
         json.containsKey('lot_number') ||
         json.containsKey('lotNo') ||
         json.containsKey('lot_no');
     if (!hasLotNumber) return false;
 
     final hasSku = json.containsKey('sku');
-    final hasFabric = json.containsKey('fabricType') || json.containsKey('fabric_type');
-    final hasId = json.containsKey('id') ||
+    final hasFabric =
+        json.containsKey('fabricType') || json.containsKey('fabric_type');
+    final hasId =
+        json.containsKey('id') ||
         json.containsKey('lotId') ||
         json.containsKey('lot_id') ||
         json.containsKey('lotID');
@@ -410,7 +415,10 @@ class ApiService {
     }
 
     final lotNumber =
-        json['lotNumber'] ?? json['lot_number'] ?? json['lotNo'] ?? json['lot_no'];
+        json['lotNumber'] ??
+        json['lot_number'] ??
+        json['lotNo'] ??
+        json['lot_no'];
     if (lotNumber != null) {
       return 'lot:$lotNumber';
     }
