@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/api_lot.dart';
 import '../models/fabric_roll.dart';
+import '../models/filter_options.dart';
 import '../models/login_response.dart';
 import '../services/api_service.dart';
 import '../utils/download_helper.dart';
@@ -158,6 +159,7 @@ class _ResponsePageState extends State<ResponsePage> {
   );
   final TextEditingController _remarkCtrl = TextEditingController();
   final TextEditingController _lotSearchCtrl = TextEditingController();
+  final TextEditingController _skuCodeCtrl = TextEditingController();
   TextEditingController? _rollCtrl;
 
   final List<SizeEntryData> _sizes = [];
@@ -168,12 +170,19 @@ class _ResponsePageState extends State<ResponsePage> {
   List<ApiLotSummary> _filteredLots = [];
   ApiLot? _recentLot;
 
+  List<String> _genders = [];
+  List<String> _categories = [];
+  String? _selectedGender;
+  String? _selectedCategory;
+
   String? _selectedFabric;
   bool _loadingRolls = false;
   bool _loadingLots = false;
+  bool _loadingFilters = false;
   bool _creatingLot = false;
   String? _rollsError;
   String? _lotsError;
+  String? _filtersError;
 
   bool get _isCuttingMaster {
     final normalizedRole = widget.data.normalizedRole;
@@ -210,7 +219,9 @@ class _ResponsePageState extends State<ResponsePage> {
     super.initState();
     _bundleSizeCtrl.addListener(_onFormChanged);
     _lotSearchCtrl.addListener(_onSearchFieldChanged);
+    _skuCodeCtrl.addListener(_updateSkuFromParts);
     _addSizeEntry(notify: false);
+    _loadFilters();
     if (_isCuttingMaster) {
       _loadRolls();
       _loadMyLots();
@@ -219,6 +230,9 @@ class _ResponsePageState extends State<ResponsePage> {
 
   @override
   void dispose() {
+    _skuCodeCtrl
+      ..removeListener(_updateSkuFromParts)
+      ..dispose();
     _skuCtrl.dispose();
     _bundleSizeCtrl
       ..removeListener(_onFormChanged)
@@ -255,6 +269,63 @@ class _ResponsePageState extends State<ResponsePage> {
       if (mounted) {
         setState(() => _loadingRolls = false);
       }
+    }
+  }
+
+  void _updateSkuFromParts() {
+    final gender = _selectedGender?.trim();
+    final category = _selectedCategory?.trim();
+    final code = _skuCodeCtrl.text.trim();
+
+    final parts = <String>[];
+    if (gender != null && gender.isNotEmpty) {
+      parts.add(gender);
+    }
+    if (category != null && category.isNotEmpty) {
+      parts.add(category);
+    }
+    if (code.isNotEmpty) {
+      parts.add(code);
+    }
+
+    final sku = parts.join('-');
+    if (_skuCtrl.text != sku) {
+      _skuCtrl.value = TextEditingValue(
+        text: sku,
+        selection: TextSelection.collapsed(offset: sku.length),
+      );
+    }
+  }
+
+  Future<void> _loadFilters() async {
+    setState(() {
+      _loadingFilters = true;
+      _filtersError = null;
+    });
+    try {
+      final FilterOptions filters = await widget.api.fetchFilters();
+      if (!mounted) return;
+      setState(() {
+        _genders = filters.genders;
+        _categories = filters.categories;
+        if (!_genders.contains(_selectedGender)) {
+          _selectedGender = null;
+        }
+        if (!_categories.contains(_selectedCategory)) {
+          _selectedCategory = null;
+        }
+      });
+      _updateSkuFromParts();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _filtersError = e.message;
+      });
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _loadingFilters = false;
+      });
     }
   }
 
@@ -661,10 +732,30 @@ class _ResponsePageState extends State<ResponsePage> {
                 children: [
                   _LotInfoCard(
                     skuCtrl: _skuCtrl,
+                    skuCodeCtrl: _skuCodeCtrl,
                     bundleSizeCtrl: _bundleSizeCtrl,
                     remarkCtrl: _remarkCtrl,
                     fabricTypes: fabricTypes,
                     selectedFabric: _selectedFabric,
+                    genders: _genders,
+                    categories: _categories,
+                    selectedGender: _selectedGender,
+                    selectedCategory: _selectedCategory,
+                    loadingFilters: _loadingFilters,
+                    filtersError: _filtersError,
+                    onGenderChanged: (value) {
+                      setState(() {
+                        _selectedGender = value;
+                      });
+                      _updateSkuFromParts();
+                    },
+                    onCategoryChanged: (value) {
+                      setState(() {
+                        _selectedCategory = value;
+                      });
+                      _updateSkuFromParts();
+                    },
+                    onRetryFilters: _loadFilters,
                     onFabricChanged: (value) {
                       setState(() {
                         _selectedFabric = value;
@@ -1082,18 +1173,38 @@ class _ResponsePageState extends State<ResponsePage> {
 
 class _LotInfoCard extends StatefulWidget {
   final TextEditingController skuCtrl;
+  final TextEditingController skuCodeCtrl;
   final TextEditingController bundleSizeCtrl;
   final TextEditingController remarkCtrl;
   final List<String> fabricTypes;
   final String? selectedFabric;
+  final List<String> genders;
+  final List<String> categories;
+  final String? selectedGender;
+  final String? selectedCategory;
+  final bool loadingFilters;
+  final String? filtersError;
+  final ValueChanged<String?> onGenderChanged;
+  final ValueChanged<String?> onCategoryChanged;
+  final VoidCallback onRetryFilters;
   final ValueChanged<String?> onFabricChanged;
 
   const _LotInfoCard({
     required this.skuCtrl,
+    required this.skuCodeCtrl,
     required this.bundleSizeCtrl,
     required this.remarkCtrl,
     required this.fabricTypes,
     required this.selectedFabric,
+    required this.genders,
+    required this.categories,
+    required this.selectedGender,
+    required this.selectedCategory,
+    required this.loadingFilters,
+    required this.filtersError,
+    required this.onGenderChanged,
+    required this.onCategoryChanged,
+    required this.onRetryFilters,
     required this.onFabricChanged,
   });
 
@@ -1149,6 +1260,13 @@ class _LotInfoCardState extends State<_LotInfoCard> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final genderValue = widget.genders.contains(widget.selectedGender)
+        ? widget.selectedGender
+        : null;
+    final categoryValue = widget.categories.contains(widget.selectedCategory)
+        ? widget.selectedCategory
+        : null;
+    final filtersReady = !widget.loadingFilters && widget.filtersError == null;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -1162,12 +1280,116 @@ class _LotInfoCardState extends State<_LotInfoCard> {
               ),
             ),
             const SizedBox(height: 16),
+            if (widget.loadingFilters) ...[
+              const LinearProgressIndicator(),
+              const SizedBox(height: 16),
+            ],
+            if (widget.filtersError != null) ...[
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Failed to load filters: ${widget.filtersError}',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.error,
+                      ),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: widget.onRetryFilters,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Retry'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+            ],
+            DropdownButtonFormField<String>(
+              value: genderValue,
+              items: widget.genders
+                  .map(
+                    (gender) => DropdownMenuItem(
+                      value: gender,
+                      child: Text(gender),
+                    ),
+                  )
+                  .toList(),
+              onChanged: filtersReady ? widget.onGenderChanged : null,
+              decoration: const InputDecoration(
+                labelText: 'Gender',
+                hintText: 'Select a gender',
+              ),
+              validator: (value) {
+                if (widget.loadingFilters) {
+                  return 'Filters are loading.';
+                }
+                if (widget.filtersError != null) {
+                  return 'Filters failed to load.';
+                }
+                if ((value ?? '').trim().isEmpty) {
+                  return 'Select a gender.';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+            DropdownButtonFormField<String>(
+              value: categoryValue,
+              items: widget.categories
+                  .map(
+                    (category) => DropdownMenuItem(
+                      value: category,
+                      child: Text(category),
+                    ),
+                  )
+                  .toList(),
+              onChanged: filtersReady ? widget.onCategoryChanged : null,
+              decoration: const InputDecoration(
+                labelText: 'Category',
+                hintText: 'Select a category',
+              ),
+              validator: (value) {
+                if (widget.loadingFilters) {
+                  return 'Filters are loading.';
+                }
+                if (widget.filtersError != null) {
+                  return 'Filters failed to load.';
+                }
+                if ((value ?? '').trim().isEmpty) {
+                  return 'Select a category.';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: widget.skuCodeCtrl,
+              textInputAction: TextInputAction.next,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: const InputDecoration(
+                labelText: 'SKU code',
+                hintText: 'Enter numeric code',
+              ),
+              validator: (value) {
+                final trimmed = (value ?? '').trim();
+                if (trimmed.isEmpty) {
+                  return 'Enter a numeric code.';
+                }
+                if (int.tryParse(trimmed) == null) {
+                  return 'Code must be numeric.';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
             TextFormField(
               controller: widget.skuCtrl,
-              textInputAction: TextInputAction.next,
+              readOnly: true,
               decoration: const InputDecoration(
                 labelText: 'SKU',
-                hintText: 'Enter the style or SKU',
+                hintText: 'SKU is generated from gender, category, and code',
               ),
               validator: (value) {
                 if (value == null || value.trim().isEmpty) {

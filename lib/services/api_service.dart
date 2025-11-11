@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/api_lot.dart';
 import '../models/fabric_roll.dart';
+import '../models/filter_options.dart';
 import '../models/login_response.dart';
 
 class ApiException implements Exception {
@@ -149,6 +150,39 @@ class ApiService {
       rethrow;
     } catch (e) {
       debugPrint('fetchFabricRolls() unexpected error: $e');
+      throw ApiException('Unexpected error: $e');
+    }
+  }
+
+  Future<FilterOptions> fetchFilters() async {
+    final uri = Uri.parse('$_baseUrl/api/filters');
+    try {
+      final res = await _client
+          .get(uri, headers: _authorizedHeaders())
+          .timeout(const Duration(seconds: 20));
+
+      final status = res.statusCode;
+      final raw = _safeDecodeUtf8(res.bodyBytes);
+      final Map<String, dynamic>? json = _tryParseJson(raw);
+
+      if (status >= 200 && status < 300 && json != null) {
+        return FilterOptions.fromJson(json);
+      }
+
+      final msg = _extractMessage(json, raw) ??
+          'Failed to fetch filters (status: $status).';
+      debugPrint('fetchFilters() error [$status]: $raw');
+      throw ApiException(msg);
+    } on TimeoutException catch (e) {
+      debugPrint('fetchFilters() timeout: $e');
+      throw ApiException('Request timed out. Check your connection.');
+    } on SocketException catch (e) {
+      debugPrint('fetchFilters() network error: $e');
+      throw ApiException('No internet connection.');
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      debugPrint('fetchFilters() unexpected error: $e');
       throw ApiException('Unexpected error: $e');
     }
   }
