@@ -17,7 +17,7 @@ class ApiException implements Exception {
 }
 
 class ApiService {
-  static const String _baseUrl = 'http://13.203.180.77:3000/';
+  static const String _baseUrl = 'http://13.203.180.77:3000';
   final http.Client _client;
   String? _sessionCookie;
   ApiService({http.Client? client}) : _client = client ?? http.Client();
