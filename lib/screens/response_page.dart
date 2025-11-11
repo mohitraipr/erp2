@@ -155,7 +155,7 @@ class _ResponsePageState extends State<ResponsePage> {
   final GlobalKey<FormState> _lotFormKey = GlobalKey<FormState>();
   final TextEditingController _skuCtrl = TextEditingController();
   final TextEditingController _bundleSizeCtrl = TextEditingController(
-    text: '12',
+    text: '25',
   );
   final TextEditingController _remarkCtrl = TextEditingController();
   final TextEditingController _lotSearchCtrl = TextEditingController();
@@ -1048,8 +1048,8 @@ class _ResponsePageState extends State<ResponsePage> {
     final totalLots = _myLots.length;
     final statusText = hasQuery
         ? (results == 0
-            ? 'No lots match "$query".'
-            : '$results result${results == 1 ? '' : 's'} match "$query".')
+              ? 'No lots match "$query".'
+              : '$results result${results == 1 ? '' : 's'} match "$query".')
         : 'Viewing $totalLots lot${totalLots == 1 ? '' : 's'}.';
 
     return Card(
@@ -1309,10 +1309,8 @@ class _LotInfoCardState extends State<_LotInfoCard> {
               value: genderValue,
               items: widget.genders
                   .map(
-                    (gender) => DropdownMenuItem(
-                      value: gender,
-                      child: Text(gender),
-                    ),
+                    (gender) =>
+                        DropdownMenuItem(value: gender, child: Text(gender)),
                   )
                   .toList(),
               onChanged: filtersReady ? widget.onGenderChanged : null,
@@ -1907,10 +1905,7 @@ class _InlineInfoBanner extends StatelessWidget {
               ),
             ),
           ),
-          TextButton(
-            onPressed: () => onRetry(),
-            child: const Text('Retry'),
-          ),
+          TextButton(onPressed: () => onRetry(), child: const Text('Retry')),
         ],
       ),
     );
@@ -1934,11 +1929,17 @@ class _EmptyLotsState extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Icon(Icons.inbox_outlined, size: 40, color: theme.colorScheme.primary),
+            Icon(
+              Icons.inbox_outlined,
+              size: 40,
+              color: theme.colorScheme.primary,
+            ),
             const SizedBox(height: 16),
             Text(
               hasQuery ? 'No matching lots' : 'No lots yet',
-              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const SizedBox(height: 8),
             Text(
