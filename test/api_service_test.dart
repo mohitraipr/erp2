@@ -111,4 +111,23 @@ void main() {
       expect(lots.map((e) => e.lotNumber), containsAllInOrder(['LOT-042', 'LOT-099']));
     });
   });
+
+  group('ApiService.fetchFilters', () {
+    test('returns gender and category lists from the server payload', () async {
+      final client = MockClient((request) async {
+        expect(request.url.path, '/api/filters');
+        final body = jsonEncode({
+          'genders': ['Men', 'Women'],
+          'categories': ['Shirts', 'Pants'],
+        });
+        return http.Response(body, 200);
+      });
+
+      final api = ApiService(client: client);
+      final filters = await api.fetchFilters();
+
+      expect(filters.genders, ['Men', 'Women']);
+      expect(filters.categories, ['Shirts', 'Pants']);
+    });
+  });
 }
