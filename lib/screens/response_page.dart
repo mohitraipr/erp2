@@ -169,6 +169,13 @@ class _ResponsePageState extends State<ResponsePage> {
     'finishing': 'finishing',
   };
 
+  static const Set<String> _stagesRequiringMaster = {
+    'back_pocket',
+    'stitching_master',
+    'jeans_assembly',
+    'finishing',
+  };
+
   static const Map<String, String> _stageCodeLabels = {
     'back_pocket': 'Bundle code',
     'stitching_master': 'Bundle code',
@@ -224,6 +231,7 @@ class _ResponsePageState extends State<ResponsePage> {
   Map<String, dynamic>? _bundleDetails;
   bool _loadingBundleDetails = false;
   String? _bundleError;
+  int? _selectedMasterId;
 
   List<String> _genders = [];
   List<String> _categories = [];
@@ -256,6 +264,12 @@ class _ResponsePageState extends State<ResponsePage> {
   String? get _productionStage => _productionRoleStage[_normalizedRole];
 
   bool get _isProductionStageUser => _productionStage != null;
+
+  bool get _stageRequiresMaster {
+    final stage = _productionStage;
+    if (stage == null) return false;
+    return _stagesRequiringMaster.contains(stage);
+  }
 
   String get _productionCodeLabel {
     final stage = _productionStage;
@@ -297,7 +311,7 @@ class _ResponsePageState extends State<ResponsePage> {
     _skuCodeCtrl.addListener(_updateSkuFromParts);
     _addSizeEntry(notify: false);
     _loadFilters();
-    if (_canManageMasters) {
+    if (_canManageMasters || _stageRequiresMaster) {
       _loadMasters();
     }
     if (_isProductionStageUser) {
@@ -368,6 +382,15 @@ class _ResponsePageState extends State<ResponsePage> {
       if (!mounted) return;
       setState(() {
         _masters = masters;
+        if (_stageRequiresMaster) {
+          if (_selectedMasterId != null &&
+              !_masters.any((master) => master.id == _selectedMasterId)) {
+            _selectedMasterId = null;
+          }
+          if (_selectedMasterId == null && _masters.isNotEmpty) {
+            _selectedMasterId = _masters.first.id;
+          }
+        }
       });
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -401,6 +424,10 @@ class _ResponsePageState extends State<ResponsePage> {
       if (!mounted) return;
       setState(() {
         _masters.insert(0, master);
+        _mastersError = null;
+        if (_stageRequiresMaster) {
+          _selectedMasterId = master.id;
+        }
       });
       _masterNameCtrl.clear();
       _masterContactCtrl.clear();
@@ -454,6 +481,13 @@ class _ResponsePageState extends State<ResponsePage> {
     final code = _productionCodeCtrl.text.trim().toUpperCase();
     final remark = _productionRemarkCtrl.text.trim();
 
+    if (_stageRequiresMaster && _selectedMasterId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Select a master before submitting.')),
+      );
+      return;
+    }
+
     if (code.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Please enter a ${_productionCodeLabel.toLowerCase()}.')),
@@ -466,6 +500,7 @@ class _ResponsePageState extends State<ResponsePage> {
       final result = await widget.api.submitProductionFlowEntry(
         code: code,
         remark: remark.isEmpty ? null : remark,
+        masterId: _selectedMasterId,
       );
 
       if (!mounted) return;
@@ -948,7 +983,7 @@ class _ResponsePageState extends State<ResponsePage> {
         icon: const Icon(Icons.refresh),
         onPressed: () {
           _loadProductionEntries();
-          if (_canManageMasters) {
+          if (_canManageMasters || _stageRequiresMaster) {
             _loadMasters();
           }
         },
@@ -1053,6 +1088,10 @@ class _ResponsePageState extends State<ResponsePage> {
 
   Widget _buildProductionFormCard(BuildContext context, String stage) {
     final theme = Theme.of(context);
+    final requiresMaster = _stageRequiresMaster;
+    final canSubmit = !_submittingProduction &&
+        (!requiresMaster ||
+            (_selectedMasterId != null && _masters.isNotEmpty));
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -1076,6 +1115,10 @@ class _ResponsePageState extends State<ResponsePage> {
               ),
               onSubmitted: (_) => _submitProductionEntry(),
             ),
+            if (requiresMaster) ...[
+              const SizedBox(height: 12),
+              _buildMasterSelectionField(theme),
+            ],
             const SizedBox(height: 12),
             TextField(
               controller: _productionRemarkCtrl,
@@ -1101,7 +1144,7 @@ class _ResponsePageState extends State<ResponsePage> {
                   label: Text(
                     _submittingProduction ? 'Submitting…' : 'Submit entry',
                   ),
-                  onPressed: _submittingProduction ? null : _submitProductionEntry,
+                  onPressed: canSubmit ? _submitProductionEntry : null,
                 ),
                 if (_stageRequiresBundle) ...[
                   const SizedBox(width: 12),
@@ -1137,6 +1180,82 @@ class _ResponsePageState extends State<ResponsePage> {
         ),
       ),
     );
+  }
+
+  Widget _buildMasterSelectionField(ThemeData theme) {
+    if (_loadingMasters && _masters.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final List<Widget> errorWidgets = [];
+    if (_mastersError != null) {
+      errorWidgets.addAll([
+        Text(
+          _mastersError!,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.error,
+          ),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          icon: const Icon(Icons.refresh),
+          label: const Text('Retry'),
+          onPressed: _loadMasters,
+        ),
+      ]);
+    }
+
+    if (_masters.isEmpty) {
+      if (errorWidgets.isNotEmpty) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: errorWidgets,
+        );
+      }
+      final text = _canManageMasters
+          ? 'Create a master from the Masters tab before submitting.'
+          : 'No masters found. Contact your supervisor to set up masters for your account.';
+      return Text(
+        text,
+        style: theme.textTheme.bodyMedium?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+        ),
+      );
+    }
+
+    final dropdown = DropdownButtonFormField<int>(
+      value: _selectedMasterId,
+      items: [
+        for (final master in _masters)
+          DropdownMenuItem<int>(
+            value: master.id,
+            child: Text(master.masterName),
+          ),
+      ],
+      decoration: const InputDecoration(
+        labelText: 'Select master',
+        prefixIcon: Icon(Icons.badge_outlined),
+      ),
+      onChanged: _loadingMasters
+          ? null
+          : (value) {
+              if (!mounted) return;
+              setState(() => _selectedMasterId = value);
+            },
+    );
+
+    if (errorWidgets.isNotEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ...errorWidgets,
+          const SizedBox(height: 12),
+          dropdown,
+        ],
+      );
+    }
+
+    return dropdown;
   }
 
   Widget _buildBundleSummary(ThemeData theme, Map<String, dynamic> bundle) {
