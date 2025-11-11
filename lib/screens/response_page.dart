@@ -279,16 +279,16 @@ class _ResponsePageState extends State<ResponsePage> {
 
     final parts = <String>[];
     if (gender != null && gender.isNotEmpty) {
-      parts.add(gender);
+      parts.add(gender.toUpperCase());
     }
     if (category != null && category.isNotEmpty) {
-      parts.add(category);
+      parts.add(category.toUpperCase());
     }
     if (code.isNotEmpty) {
-      parts.add(code);
+      parts.add(code.toUpperCase());
     }
 
-    final sku = parts.join('-');
+    final sku = parts.isEmpty ? '' : 'KTT${parts.join()}';
     if (_skuCtrl.text != sku) {
       _skuCtrl.value = TextEditingValue(
         text: sku,
