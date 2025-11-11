@@ -4,6 +4,8 @@ import '../models/api_lot.dart';
 import '../models/fabric_roll.dart';
 import '../models/filter_options.dart';
 import '../models/login_response.dart';
+import '../models/master_record.dart';
+import '../models/production_flow_entry.dart';
 import '../services/api_service.dart';
 import '../utils/download_helper.dart';
 import 'login_page.dart';
@@ -152,6 +154,37 @@ const List<String> _allSizeOptions = [
 ];
 
 class _ResponsePageState extends State<ResponsePage> {
+  static const Set<String> _masterCreatorRoles = {
+    'back_pocket',
+    'jeans_assembly',
+    'stitching_master',
+  };
+
+  static const Map<String, String> _productionRoleStage = {
+    'back_pocket': 'back_pocket',
+    'stitching_master': 'stitching_master',
+    'jeans_assembly': 'jeans_assembly',
+    'washing': 'washing',
+    'washing_in': 'washing_in',
+    'finishing': 'finishing',
+  };
+
+  static const Map<String, String> _stageCodeLabels = {
+    'back_pocket': 'Bundle code',
+    'stitching_master': 'Bundle code',
+    'jeans_assembly': 'Bundle code',
+    'washing': 'Lot number',
+    'washing_in': 'Piece code',
+    'finishing': 'Bundle code',
+  };
+
+  static const Set<String> _bundleStages = {
+    'back_pocket',
+    'stitching_master',
+    'jeans_assembly',
+    'finishing',
+  };
+
   final GlobalKey<FormState> _lotFormKey = GlobalKey<FormState>();
   final TextEditingController _skuCtrl = TextEditingController();
   final TextEditingController _bundleSizeCtrl = TextEditingController(
@@ -162,6 +195,14 @@ class _ResponsePageState extends State<ResponsePage> {
   final TextEditingController _skuCodeCtrl = TextEditingController();
   TextEditingController? _rollCtrl;
 
+  final GlobalKey<FormState> _masterFormKey = GlobalKey<FormState>();
+  final TextEditingController _masterNameCtrl = TextEditingController();
+  final TextEditingController _masterContactCtrl = TextEditingController();
+  final TextEditingController _masterNotesCtrl = TextEditingController();
+
+  final TextEditingController _productionCodeCtrl = TextEditingController();
+  final TextEditingController _productionRemarkCtrl = TextEditingController();
+
   final List<SizeEntryData> _sizes = [];
   final List<RollSelection> _selectedRolls = [];
 
@@ -169,6 +210,20 @@ class _ResponsePageState extends State<ResponsePage> {
   List<ApiLotSummary> _myLots = [];
   List<ApiLotSummary> _filteredLots = [];
   ApiLot? _recentLot;
+
+  List<MasterRecord> _masters = [];
+  bool _loadingMasters = false;
+  bool _creatingMaster = false;
+  String? _mastersError;
+
+  List<ProductionFlowEntry> _productionEntries = [];
+  bool _loadingProductionEntries = false;
+  bool _submittingProduction = false;
+  String? _productionEntriesError;
+  Map<String, dynamic>? _lastProductionResult;
+  Map<String, dynamic>? _bundleDetails;
+  bool _loadingBundleDetails = false;
+  String? _bundleError;
 
   List<String> _genders = [];
   List<String> _categories = [];
@@ -185,13 +240,33 @@ class _ResponsePageState extends State<ResponsePage> {
   String? _filtersError;
 
   bool get _isCuttingMaster {
-    final normalizedRole = widget.data.normalizedRole;
+    final normalizedRole = _normalizedRole;
     if (normalizedRole == 'cutting_manager') {
       return true;
     }
 
     final rawRole = widget.data.role.toLowerCase();
     return normalizedRole.contains('cutting') || rawRole.contains('cutting');
+  }
+
+  String get _normalizedRole => widget.data.normalizedRole;
+
+  bool get _canManageMasters => _masterCreatorRoles.contains(_normalizedRole);
+
+  String? get _productionStage => _productionRoleStage[_normalizedRole];
+
+  bool get _isProductionStageUser => _productionStage != null;
+
+  String get _productionCodeLabel {
+    final stage = _productionStage;
+    if (stage == null) return 'Code';
+    return _stageCodeLabels[stage] ?? 'Code';
+  }
+
+  bool get _stageRequiresBundle {
+    final stage = _productionStage;
+    if (stage == null) return false;
+    return _bundleStages.contains(stage);
   }
 
   int get _bundleSize => int.tryParse(_bundleSizeCtrl.text.trim()) ?? 0;
@@ -222,6 +297,12 @@ class _ResponsePageState extends State<ResponsePage> {
     _skuCodeCtrl.addListener(_updateSkuFromParts);
     _addSizeEntry(notify: false);
     _loadFilters();
+    if (_canManageMasters) {
+      _loadMasters();
+    }
+    if (_isProductionStageUser) {
+      _loadProductionEntries();
+    }
     if (_isCuttingMaster) {
       _loadRolls();
       _loadMyLots();
@@ -241,6 +322,11 @@ class _ResponsePageState extends State<ResponsePage> {
     _lotSearchCtrl
       ..removeListener(_onSearchFieldChanged)
       ..dispose();
+    _masterNameCtrl.dispose();
+    _masterContactCtrl.dispose();
+    _masterNotesCtrl.dispose();
+    _productionCodeCtrl.dispose();
+    _productionRemarkCtrl.dispose();
     for (final size in _sizes) {
       size.dispose();
     }
@@ -268,6 +354,177 @@ class _ResponsePageState extends State<ResponsePage> {
     } finally {
       if (mounted) {
         setState(() => _loadingRolls = false);
+      }
+    }
+  }
+
+  Future<void> _loadMasters() async {
+    setState(() {
+      _loadingMasters = true;
+      _mastersError = null;
+    });
+    try {
+      final masters = await widget.api.fetchMasters();
+      if (!mounted) return;
+      setState(() {
+        _masters = masters;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _mastersError = e.message);
+    } finally {
+      if (mounted) {
+        setState(() => _loadingMasters = false);
+      }
+    }
+  }
+
+  Future<void> _createMasterRecord() async {
+    if (_creatingMaster) return;
+    final form = _masterFormKey.currentState;
+    if (form == null || !form.validate()) {
+      return;
+    }
+
+    final name = _masterNameCtrl.text.trim();
+    final contact = _masterContactCtrl.text.trim();
+    final notes = _masterNotesCtrl.text.trim();
+
+    setState(() => _creatingMaster = true);
+    try {
+      final master = await widget.api.createMaster(
+        masterName: name,
+        contactNumber: contact.isEmpty ? null : contact,
+        notes: notes.isEmpty ? null : notes,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _masters.insert(0, master);
+      });
+      _masterNameCtrl.clear();
+      _masterContactCtrl.clear();
+      _masterNotesCtrl.clear();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Master ${master.masterName} created.')),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) {
+        setState(() => _creatingMaster = false);
+      }
+    }
+  }
+
+  Future<void> _loadProductionEntries() async {
+    final stage = _productionStage;
+    if (stage == null) return;
+    setState(() {
+      _loadingProductionEntries = true;
+      _productionEntriesError = null;
+    });
+    try {
+      final entries = await widget.api.fetchProductionFlowEntries(
+        stage: stage,
+        limit: 200,
+      );
+      if (!mounted) return;
+      setState(() {
+        _productionEntries = entries;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _productionEntriesError = e.message);
+    } finally {
+      if (mounted) {
+        setState(() => _loadingProductionEntries = false);
+      }
+    }
+  }
+
+  Future<void> _submitProductionEntry() async {
+    if (_submittingProduction) return;
+    final stage = _productionStage;
+    if (stage == null) return;
+
+    final code = _productionCodeCtrl.text.trim().toUpperCase();
+    final remark = _productionRemarkCtrl.text.trim();
+
+    if (code.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Please enter a ${_productionCodeLabel.toLowerCase()}.')),
+      );
+      return;
+    }
+
+    setState(() => _submittingProduction = true);
+    try {
+      final result = await widget.api.submitProductionFlowEntry(
+        code: code,
+        remark: remark.isEmpty ? null : remark,
+      );
+
+      if (!mounted) return;
+
+      FocusScope.of(context).unfocus();
+
+      setState(() {
+        _lastProductionResult = result;
+        _bundleDetails = null;
+        _bundleError = null;
+      });
+      _productionCodeCtrl.clear();
+      _productionRemarkCtrl.clear();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Entry submitted for $stage.')),
+      );
+
+      await _loadProductionEntries();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) {
+        setState(() => _submittingProduction = false);
+      }
+    }
+  }
+
+  Future<void> _lookupBundleDetails() async {
+    if (!_stageRequiresBundle) return;
+    final code = _productionCodeCtrl.text.trim().toUpperCase();
+    if (code.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a bundle code to look up.')),
+      );
+      return;
+    }
+
+    setState(() {
+      _loadingBundleDetails = true;
+      _bundleError = null;
+    });
+    try {
+      final bundle = await widget.api.fetchBundleSummary(code);
+      if (!mounted) return;
+      setState(() {
+        _bundleDetails = bundle;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _bundleError = e.message;
+        _bundleDetails = null;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _loadingBundleDetails = false);
       }
     }
   }
@@ -619,22 +876,30 @@ class _ResponsePageState extends State<ResponsePage> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_isCuttingMaster) {
-      return Scaffold(
-        appBar: AppBar(
-          title: const Text('Aurora Workspace'),
-          actions: [
-            IconButton(
-              tooltip: 'Logout',
-              icon: const Icon(Icons.logout),
-              onPressed: _logout,
-            ),
-          ],
-        ),
-        body: _buildWelcomeCard(context),
-      );
+    if (_isCuttingMaster) {
+      return _buildCuttingMasterWorkspace(context);
     }
 
+    if (_isProductionStageUser) {
+      return _buildProductionWorkspace(context);
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Aurora Workspace'),
+        actions: [
+          IconButton(
+            tooltip: 'Logout',
+            icon: const Icon(Icons.logout),
+            onPressed: _logout,
+          ),
+        ],
+      ),
+      body: _buildWelcomeCard(context),
+    );
+  }
+
+  Widget _buildCuttingMasterWorkspace(BuildContext context) {
     return DefaultTabController(
       length: 2,
       child: Scaffold(
@@ -667,6 +932,738 @@ class _ResponsePageState extends State<ResponsePage> {
         ),
       ),
     );
+  }
+
+  Widget _buildProductionWorkspace(BuildContext context) {
+    final tabLabels = <String>['Production flow'];
+    final tabViews = <Widget>[_buildProductionFlowTab(context)];
+    if (_canManageMasters) {
+      tabLabels.add('Masters');
+      tabViews.add(_buildMastersTab(context));
+    }
+
+    final actions = <Widget>[
+      IconButton(
+        tooltip: 'Reload',
+        icon: const Icon(Icons.refresh),
+        onPressed: () {
+          _loadProductionEntries();
+          if (_canManageMasters) {
+            _loadMasters();
+          }
+        },
+      ),
+      IconButton(
+        tooltip: 'Logout',
+        icon: const Icon(Icons.logout),
+        onPressed: _logout,
+      ),
+    ];
+
+    if (tabLabels.length == 1) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Aurora Production'),
+          actions: actions,
+        ),
+        body: tabViews.first,
+      );
+    }
+
+    return DefaultTabController(
+      length: tabLabels.length,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Aurora Production'),
+          actions: actions,
+          bottom: TabBar(
+            tabs: [for (final label in tabLabels) Tab(text: label)],
+          ),
+        ),
+        body: TabBarView(children: tabViews),
+      ),
+    );
+  }
+
+  Widget _buildProductionFlowTab(BuildContext context) {
+    final stage = _productionStage;
+    if (stage == null) {
+      return const Center(child: Text('No production stage assigned.'));
+    }
+
+    final children = <Widget>[
+      _buildProductionIntroCard(context, stage),
+      const SizedBox(height: 16),
+      _buildProductionFormCard(context, stage),
+    ];
+
+    if (_lastProductionResult != null) {
+      children.addAll([
+        const SizedBox(height: 16),
+        _buildProductionResultCard(context),
+      ]);
+    }
+
+    children.addAll([
+      const SizedBox(height: 16),
+      _buildProductionEntriesCard(context),
+      const SizedBox(height: 32),
+    ]);
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        await _loadProductionEntries();
+      },
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        children: children,
+      ),
+    );
+  }
+
+  Widget _buildProductionIntroCard(BuildContext context, String stage) {
+    final theme = Theme.of(context);
+    final stageName = _prettyStageName(stage);
+    final instruction = _stageInstruction(stage);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              stageName,
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              instruction,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProductionFormCard(BuildContext context, String stage) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Submit ${_productionCodeLabel.toLowerCase()}',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _productionCodeCtrl,
+              textCapitalization: TextCapitalization.characters,
+              decoration: InputDecoration(
+                labelText: _productionCodeLabel,
+                prefixIcon: const Icon(Icons.qr_code_2),
+                helperText: 'Stage: ${_prettyStageName(stage)}',
+              ),
+              onSubmitted: (_) => _submitProductionEntry(),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _productionRemarkCtrl,
+              maxLines: 2,
+              maxLength: 255,
+              decoration: const InputDecoration(
+                labelText: 'Remark (optional)',
+                alignLabelWithHint: true,
+                prefixIcon: Icon(Icons.sticky_note_2_outlined),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                FilledButton.icon(
+                  icon: _submittingProduction
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.playlist_add_check),
+                  label: Text(
+                    _submittingProduction ? 'Submitting…' : 'Submit entry',
+                  ),
+                  onPressed: _submittingProduction ? null : _submitProductionEntry,
+                ),
+                if (_stageRequiresBundle) ...[
+                  const SizedBox(width: 12),
+                  OutlinedButton.icon(
+                    icon: _loadingBundleDetails
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.search),
+                    label: const Text('Lookup bundle'),
+                    onPressed:
+                        _loadingBundleDetails ? null : _lookupBundleDetails,
+                  ),
+                ],
+              ],
+            ),
+            if (_bundleError != null && _stageRequiresBundle) ...[
+              const SizedBox(height: 12),
+              Text(
+                _bundleError!,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.error,
+                ),
+              ),
+            ],
+            if (_bundleDetails != null && _stageRequiresBundle) ...[
+              const SizedBox(height: 12),
+              _buildBundleSummary(theme, _bundleDetails!),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBundleSummary(ThemeData theme, Map<String, dynamic> bundle) {
+    final details = <String, dynamic>{
+      'Lot number': bundle['lotNumber'] ?? bundle['lot_number'],
+      'Bundle code': bundle['bundleCode'] ?? bundle['bundle_code'],
+      'Pieces in bundle': bundle['piecesInBundle'] ?? bundle['pieces_in_bundle'],
+      'Piece records': bundle['pieceCount'] ?? bundle['piece_count'],
+      'Fabric': bundle['fabricType'] ?? bundle['fabric_type'],
+      'SKU': bundle['sku'],
+    };
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Bundle details',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            children: _buildDataChips(details),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProductionResultCard(BuildContext context) {
+    final result = _lastProductionResult;
+    if (result == null) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    final stageLabel = _prettyStageName(
+      (result['stage'] ?? _productionStage ?? '').toString(),
+    );
+    final message = result['message']?.toString();
+    final bool success = result['success'] == true ||
+        (result['status'] == 200 || result['status'] == 201);
+    Map<String, dynamic>? data;
+    if (result['data'] is Map) {
+      data = Map<String, dynamic>.from(result['data'] as Map);
+    }
+
+    return Card(
+      color: theme.colorScheme.secondaryContainer.withOpacity(0.4),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  'Latest submission',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: theme.colorScheme.onSecondaryContainer,
+                  ),
+                ),
+                const Spacer(),
+                Chip(
+                  label: Text(success ? 'Success' : 'Completed'),
+                  backgroundColor:
+                      theme.colorScheme.onSecondaryContainer.withOpacity(0.08),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Stage: $stageLabel',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSecondaryContainer,
+              ),
+            ),
+            if (message != null && message.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                message,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSecondaryContainer,
+                ),
+              ),
+            ],
+            if (data != null && data.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                children: _buildDataChips(data),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProductionEntriesCard(BuildContext context) {
+    if (_loadingProductionEntries && _productionEntries.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_productionEntriesError != null && _productionEntries.isEmpty) {
+      return _ErrorState(
+        message: _productionEntriesError!,
+        onRetry: _loadProductionEntries,
+      );
+    }
+
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Recent entries',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            if (_loadingProductionEntries && _productionEntries.isNotEmpty)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: LinearProgressIndicator(minHeight: 2),
+              ),
+            if (_productionEntries.isEmpty)
+              Text(
+                'No submissions yet for ${_productionStage != null && _productionStage!.isNotEmpty ? _prettyStageName(_productionStage!) : 'this stage'}.',
+                style: theme.textTheme.bodyMedium,
+              )
+            else
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemBuilder: (context, index) {
+                  final entry = _productionEntries[index];
+                  return _buildProductionEntryTile(context, entry);
+                },
+                separatorBuilder: (_, __) => const Divider(height: 20),
+                itemCount: _productionEntries.length,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProductionEntryTile(
+    BuildContext context,
+    ProductionFlowEntry entry,
+  ) {
+    final theme = Theme.of(context);
+    final detailParts = <String>[];
+    if (entry.lotNumber != null && entry.lotNumber!.isNotEmpty) {
+      detailParts.add('Lot ${entry.lotNumber}');
+    }
+    if (entry.bundleCode != null && entry.bundleCode!.isNotEmpty) {
+      detailParts.add('Bundle ${entry.bundleCode}');
+    }
+    if (entry.pieceCode != null && entry.pieceCode!.isNotEmpty) {
+      detailParts.add('Piece ${entry.pieceCode}');
+    }
+    final detailText = detailParts.join(' • ');
+
+    final userParts = <String>[];
+    if (entry.userUsername != null && entry.userUsername!.isNotEmpty) {
+      userParts.add(entry.userUsername!);
+    }
+    if (entry.userRole != null && entry.userRole!.isNotEmpty) {
+      userParts.add(entry.userRole!);
+    }
+    final userText = userParts.isEmpty ? 'Unknown user' : userParts.join(' • ');
+    final timestamp = _formatDateTime(entry.createdAt);
+    final remark = entry.remark?.trim();
+
+    final statusChip = Chip(
+      label: Text(entry.isClosed ? 'Closed' : 'Open'),
+      backgroundColor: entry.isClosed
+          ? theme.colorScheme.primary.withOpacity(0.12)
+          : theme.colorScheme.secondaryContainer.withOpacity(0.6),
+    );
+
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: CircleAvatar(
+        backgroundColor: theme.colorScheme.primary.withOpacity(0.15),
+        child: Text(
+          entry.stage.isNotEmpty ? entry.stage[0].toUpperCase() : '?',
+          style: theme.textTheme.titleMedium,
+        ),
+      ),
+      title: Text(
+        entry.codeValue,
+        style: theme.textTheme.titleMedium,
+      ),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (detailText.isNotEmpty)
+            Text(
+              detailText,
+              style: theme.textTheme.bodyMedium,
+            ),
+          Text(
+            '$userText • $timestamp',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          if (remark != null && remark.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                'Note: $remark',
+                style: theme.textTheme.bodySmall,
+              ),
+            ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              statusChip,
+              if (entry.piecesTotal != null)
+                Chip(label: Text('${entry.piecesTotal} pcs')),
+            ],
+          ),
+        ],
+      ),
+      trailing: entry.createdAt != null
+          ? Text(
+              _formatTime(entry.createdAt!),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            )
+          : null,
+    );
+  }
+
+  Widget _buildMastersTab(BuildContext context) {
+    Widget listSection;
+    if (_loadingMasters && _masters.isEmpty) {
+      listSection = const Center(child: CircularProgressIndicator());
+    } else if (_mastersError != null && _masters.isEmpty) {
+      listSection = _ErrorState(
+        message: _mastersError!,
+        onRetry: _loadMasters,
+      );
+    } else {
+      listSection = _buildMastersListCard(context);
+    }
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        await _loadMasters();
+      },
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        children: [
+          _buildMastersFormCard(context),
+          const SizedBox(height: 16),
+          listSection,
+          const SizedBox(height: 32),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMastersFormCard(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Form(
+          key: _masterFormKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Create master',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _masterNameCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Master name',
+                  prefixIcon: Icon(Icons.person_outline),
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Enter master name';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _masterContactCtrl,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(
+                  labelText: 'Contact number',
+                  prefixIcon: Icon(Icons.phone_outlined),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _masterNotesCtrl,
+                maxLines: 2,
+                maxLength: 255,
+                decoration: const InputDecoration(
+                  labelText: 'Notes',
+                  alignLabelWithHint: true,
+                  prefixIcon: Icon(Icons.note_alt_outlined),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton.icon(
+                  icon: _creatingMaster
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.save_alt),
+                  label: Text(
+                    _creatingMaster ? 'Saving…' : 'Save master',
+                  ),
+                  onPressed: _creatingMaster ? null : _createMasterRecord,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMastersListCard(BuildContext context) {
+    final theme = Theme.of(context);
+    if (_masters.isEmpty) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Text(
+            'No masters created yet. Use the form above to add your first master.',
+            style: theme.textTheme.bodyMedium,
+          ),
+        ),
+      );
+    }
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Your masters',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 12),
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemBuilder: (context, index) {
+                final master = _masters[index];
+                final roleLabel = master.creatorRole != null
+                    ? _prettyStageName(master.creatorRole!.toLowerCase())
+                    : null;
+                final createdLabel = _formatDateTime(master.createdAt);
+
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const CircleAvatar(child: Icon(Icons.person)),
+                  title: Text(
+                    master.masterName,
+                    style: theme.textTheme.titleMedium,
+                  ),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (master.contactNumber != null &&
+                          master.contactNumber!.isNotEmpty)
+                        Text(master.contactNumber!),
+                      if (master.notes != null && master.notes!.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(master.notes!),
+                        ),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          'Created $createdLabel',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  trailing: roleLabel != null && roleLabel.isNotEmpty
+                      ? Chip(label: Text(roleLabel))
+                      : null,
+                );
+              },
+              separatorBuilder: (_, __) => const Divider(height: 24),
+              itemCount: _masters.length,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _prettyStageName(String stage) {
+    if (stage.isEmpty) return '';
+    final parts = stage.split(RegExp(r'[_\s]+')).where((part) => part.isNotEmpty);
+    return parts
+        .map((part) => part.substring(0, 1).toUpperCase() + part.substring(1))
+        .join(' ');
+  }
+
+  String _stageInstruction(String stage) {
+    switch (stage) {
+      case 'back_pocket':
+        return 'Scan or enter the bundle code as soon as back pocket stitching is complete.';
+      case 'stitching_master':
+        return 'Submit the bundle code once stitching is done to notify downstream stages.';
+      case 'jeans_assembly':
+        return 'Only submit bundles that have been recorded by both back pocket and stitching teams.';
+      case 'washing':
+        return 'Enter the lot number to register all pieces leaving jeans assembly for washing.';
+      case 'washing_in':
+        return 'Scan the individual piece code when it returns from washing.';
+      case 'finishing':
+        return 'Submit the bundle code after confirming every piece has passed washing in.';
+      default:
+        return 'Submit the production code assigned to your station to update the flow.';
+    }
+  }
+
+  List<Widget> _buildDataChips(Map<String, dynamic> data) {
+    final chips = <Widget>[];
+    data.forEach((key, value) {
+      if (value == null) return;
+      final formatted = _formatDataValue(value);
+      if (formatted.isEmpty) return;
+      chips.add(Chip(label: Text('${_humanizeKey(key)}: $formatted')));
+    });
+    if (chips.isEmpty) {
+      chips.add(const Chip(label: Text('No details provided')));
+    }
+    return chips;
+  }
+
+  String _formatDataValue(dynamic value) {
+    if (value is bool) return value ? 'Yes' : 'No';
+    if (value is num) {
+      if (value is double && value.toStringAsFixed(1).endsWith('.0')) {
+        return value.toStringAsFixed(0);
+      }
+      return value.toString();
+    }
+    return value.toString();
+  }
+
+  String _humanizeKey(String key) {
+    if (key.isEmpty) return '';
+    final parts = key.split(RegExp(r'[_\s]+')).where((part) => part.isNotEmpty);
+    return parts
+        .map((part) => part.substring(0, 1).toUpperCase() + part.substring(1))
+        .join(' ');
+  }
+
+  String _formatDateTime(DateTime? value) {
+    if (value == null) return '—';
+    final local = value.toLocal();
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    final day = local.day.toString().padLeft(2, '0');
+    final month = months[local.month - 1];
+    final year = local.year;
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '$day $month $year • $hour:$minute';
+  }
+
+  String _formatTime(DateTime value) {
+    final local = value.toLocal();
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
   }
 
   Widget _buildWelcomeCard(BuildContext context) {
