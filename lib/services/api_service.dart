@@ -351,12 +351,16 @@ class ApiService {
   Future<Map<String, dynamic>> submitProductionFlowEntry({
     required String code,
     String? remark,
+    int? masterId,
   }) async {
     final uri = Uri.parse('$_baseUrl/api/production-flow/entries');
     try {
       final payload = <String, dynamic>{'code': code};
       if (remark != null && remark.trim().isNotEmpty) {
         payload['remark'] = remark.trim();
+      }
+      if (masterId != null) {
+        payload['masterId'] = masterId;
       }
 
       final res = await _client
