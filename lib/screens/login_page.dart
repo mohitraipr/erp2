@@ -1,6 +1,16 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import 'production_flow_page.dart';
 import 'response_page.dart';
+
+const Set<String> _productionFlowRoles = {
+  'back_pocket',
+  'stitching_master',
+  'jeans_assembly',
+  'washing',
+  'washing_in',
+  'finishing',
+};
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -39,13 +49,13 @@ class _LoginPageState extends State<LoginPage> {
       );
 
       if (!mounted) return;
+      final normalizedRole = data.normalizedRole;
+      final home = _productionFlowRoles.contains(normalizedRole)
+          ? ProductionFlowPage(data: data, api: _api)
+          : ResponsePage(data: data, api: _api);
+
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => ResponsePage(
-            data: data,
-            api: _api,
-          ),
-        ),
+        MaterialPageRoute(builder: (_) => home),
       );
     } on ApiException catch (e) {
       if (!mounted) return;
