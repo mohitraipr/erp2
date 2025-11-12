@@ -1,12 +1,25 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/api_lot.dart';
 import '../models/fabric_roll.dart';
 import '../models/filter_options.dart';
 import '../models/login_response.dart';
+import '../models/production_flow.dart';
+import '../models/user_master.dart';
 import '../services/api_service.dart';
 import '../utils/download_helper.dart';
 import 'login_page.dart';
+
+const Map<String, String> _productionRoleStageMap = {
+  'back_pocket': 'back_pocket',
+  'stitching_master': 'stitching_master',
+  'jeans_assembly': 'jeans_assembly',
+  'washing': 'washing',
+  'washing_in': 'washing_in',
+  'finishing': 'finishing',
+};
 
 class ResponsePage extends StatefulWidget {
   static const routeName = '/response';
@@ -184,6 +197,11 @@ class _ResponsePageState extends State<ResponsePage> {
   String? _lotsError;
   String? _filtersError;
 
+  String? get _productionStage =>
+      _productionRoleStageMap[widget.data.normalizedRole];
+
+  bool get _isProductionRole => _productionStage != null;
+
   bool get _isCuttingMaster {
     final normalizedRole = widget.data.normalizedRole;
     if (normalizedRole == 'cutting_manager') {
@@ -191,7 +209,9 @@ class _ResponsePageState extends State<ResponsePage> {
     }
 
     final rawRole = widget.data.role.toLowerCase();
-    return normalizedRole.contains('cutting') || rawRole.contains('cutting');
+    final looksCutting =
+        normalizedRole.contains('cutting') || rawRole.contains('cutting');
+    return looksCutting && !_isProductionRole;
   }
 
   int get _bundleSize => int.tryParse(_bundleSizeCtrl.text.trim()) ?? 0;
@@ -220,9 +240,9 @@ class _ResponsePageState extends State<ResponsePage> {
     _bundleSizeCtrl.addListener(_onFormChanged);
     _lotSearchCtrl.addListener(_onSearchFieldChanged);
     _skuCodeCtrl.addListener(_updateSkuFromParts);
-    _addSizeEntry(notify: false);
-    _loadFilters();
     if (_isCuttingMaster) {
+      _addSizeEntry(notify: false);
+      _loadFilters();
       _loadRolls();
       _loadMyLots();
     }
@@ -619,6 +639,16 @@ class _ResponsePageState extends State<ResponsePage> {
 
   @override
   Widget build(BuildContext context) {
+    final stage = _productionStage;
+    if (stage != null) {
+      return ProductionFlowScreen(
+        user: widget.data,
+        api: widget.api,
+        stage: stage,
+        onLogout: _logout,
+      );
+    }
+
     if (!_isCuttingMaster) {
       return Scaffold(
         appBar: AppBar(
@@ -2276,6 +2306,941 @@ class _ErrorState extends StatelessWidget {
               label: const Text('Try again'),
               onPressed: () => onRetry(),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class ProductionFlowScreen extends StatefulWidget {
+  final LoginResponse user;
+  final ApiService api;
+  final String stage;
+  final VoidCallback onLogout;
+
+  const ProductionFlowScreen({
+    super.key,
+    required this.user,
+    required this.api,
+    required this.stage,
+    required this.onLogout,
+  });
+
+  @override
+  State<ProductionFlowScreen> createState() => _ProductionFlowScreenState();
+}
+
+class _ProductionFlowScreenState extends State<ProductionFlowScreen> {
+  static const Set<String> _stagesRequiringMaster = {
+    'back_pocket',
+    'stitching_master',
+  };
+
+  static const Set<String> _stagesAllowingRejections = {
+    'jeans_assembly',
+    'washing_in',
+    'finishing',
+  };
+
+  static const Set<String> _bundleLookupStages = {
+    'jeans_assembly',
+    'finishing',
+  };
+
+  final TextEditingController _codeCtrl = TextEditingController();
+  final TextEditingController _remarkCtrl = TextEditingController();
+  final TextEditingController _rejectedCtrl = TextEditingController();
+
+  bool _submitting = false;
+  bool _loadingEntries = false;
+  bool _loadingMasters = false;
+  bool _loadingBundle = false;
+
+  String? _submitError;
+  String? _entriesError;
+  String? _mastersError;
+  String? _bundleError;
+
+  ProductionFlowSubmissionResult? _lastResult;
+  ProductionBundleInfo? _bundleInfo;
+
+  final List<ProductionFlowEntry> _entries = [];
+  final List<UserMaster> _masters = [];
+  UserMaster? _selectedMaster;
+
+  bool get _needsMaster => _stagesRequiringMaster.contains(widget.stage);
+  bool get _supportsRejectedPieces =>
+      _stagesAllowingRejections.contains(widget.stage);
+  bool get _supportsBundleLookup =>
+      _bundleLookupStages.contains(widget.stage);
+
+  String get _stageTitle {
+    if (widget.stage.isEmpty) return 'Production';
+    return widget.stage
+        .split('_')
+        .map((part) =>
+            part.isEmpty ? part : part[0].toUpperCase() + part.substring(1))
+        .join(' ');
+  }
+
+  String get _codeLabel {
+    switch (widget.stage) {
+      case 'jeans_assembly':
+      case 'finishing':
+        return 'Bundle code';
+      case 'washing_in':
+        return 'Piece code';
+      case 'washing':
+      case 'back_pocket':
+      case 'stitching_master':
+      default:
+        return 'Lot number';
+    }
+  }
+
+  String? get _codeHint {
+    switch (widget.stage) {
+      case 'jeans_assembly':
+        return 'Example: LOT123b4';
+      case 'finishing':
+        return 'Enter the bundle code once washing_in is complete.';
+      case 'washing_in':
+        return 'Scan each piece as it returns from washing.';
+      case 'washing':
+        return 'Enter the lot number that is moving to washing.';
+      case 'back_pocket':
+      case 'stitching_master':
+        return 'Enter the lot number to assign bundles.';
+      default:
+        return null;
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    if (_needsMaster) {
+      _loadMasters();
+    }
+    _loadEntries();
+  }
+
+  @override
+  void dispose() {
+    _codeCtrl.dispose();
+    _remarkCtrl.dispose();
+    _rejectedCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadMasters() async {
+    if (!_needsMaster) return;
+    setState(() {
+      _loadingMasters = true;
+      _mastersError = null;
+    });
+    try {
+      final masters = await widget.api.fetchMasters();
+      if (!mounted) return;
+      setState(() {
+        _masters
+          ..clear()
+          ..addAll(masters);
+        if (_masters.isEmpty) {
+          _selectedMaster = null;
+        } else {
+          final currentId = _selectedMaster?.id;
+          _selectedMaster =
+              _masters.firstWhere((master) => master.id == currentId,
+                  orElse: () => _masters.first);
+        }
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _mastersError = e.message;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _loadingMasters = false);
+      }
+    }
+  }
+
+  Future<void> _loadEntries() async {
+    setState(() {
+      _loadingEntries = true;
+      _entriesError = null;
+    });
+    try {
+      final entries = await widget.api
+          .fetchProductionFlowEntries(stage: widget.stage, limit: 200);
+      if (!mounted) return;
+      setState(() {
+        _entries
+          ..clear()
+          ..addAll(entries);
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _entriesError = e.message;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _loadingEntries = false);
+      }
+    }
+  }
+
+  Future<void> _handleRefresh() async {
+    if (_needsMaster) {
+      await _loadMasters();
+    }
+    await _loadEntries();
+  }
+
+  Future<void> _lookupBundle() async {
+    if (!_supportsBundleLookup) return;
+    final code = _codeCtrl.text.trim();
+    if (code.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a bundle code to look up.')),
+      );
+      return;
+    }
+
+    setState(() {
+      _loadingBundle = true;
+      _bundleError = null;
+    });
+    try {
+      final info = await widget.api.fetchBundleSummary(code);
+      if (!mounted) return;
+      setState(() {
+        _bundleInfo = info;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _bundleInfo = null;
+        _bundleError = e.message;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _loadingBundle = false);
+      }
+    }
+  }
+
+  List<String> _parseRejectedPieces() {
+    if (!_supportsRejectedPieces) return const [];
+    final raw = _rejectedCtrl.text;
+    final tokens = raw.split(RegExp(r'[\s,]+'));
+    final Set<String> unique = {};
+    for (final token in tokens) {
+      final normalised = token.trim().toUpperCase();
+      if (normalised.isNotEmpty) {
+        unique.add(normalised);
+      }
+    }
+    return unique.toList();
+  }
+
+  Future<void> _submitEntry() async {
+    final code = _codeCtrl.text.trim();
+    final remark = _remarkCtrl.text.trim();
+    final rejected = _parseRejectedPieces();
+
+    if (code.isEmpty && !(_supportsRejectedPieces && rejected.isNotEmpty)) {
+      setState(() {
+        _submitError =
+            'Provide ${_supportsRejectedPieces ? 'a code or rejected piece codes' : 'a valid code'}.';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_submitError!)),
+      );
+      return;
+    }
+
+    if (_needsMaster && _selectedMaster == null) {
+      setState(() {
+        _submitError = 'Please add and select a master before submitting.';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_submitError!)),
+      );
+      return;
+    }
+
+    setState(() {
+      _submitError = null;
+      _submitting = true;
+    });
+
+    try {
+      final result = await widget.api.submitProductionFlowEntry(
+        code: code.isEmpty ? null : code,
+        remark: remark.isEmpty ? null : remark,
+        masterId: _needsMaster ? _selectedMaster?.id : null,
+        masterName: _needsMaster ? _selectedMaster?.masterName : null,
+        rejectedPieces: rejected.isEmpty ? null : rejected,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _lastResult = result;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Entry recorded for ${_stageTitle.toLowerCase()}.',
+          ),
+        ),
+      );
+
+      if (code.isNotEmpty) _codeCtrl.clear();
+      if (remark.isNotEmpty) _remarkCtrl.clear();
+      if (rejected.isNotEmpty) _rejectedCtrl.clear();
+
+      await _loadEntries();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _submitError = e.message;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _submitting = false);
+      }
+    }
+  }
+
+  Future<void> _promptCreateMaster() async {
+    if (!_needsMaster) return;
+    final nameCtrl = TextEditingController();
+    final contactCtrl = TextEditingController();
+    final notesCtrl = TextEditingController();
+    UserMaster? created;
+
+    await showDialog<UserMaster>(
+      context: context,
+      builder: (dialogContext) {
+        bool saving = false;
+        String? error;
+
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            Future<void> submit() async {
+              final name = nameCtrl.text.trim();
+              if (name.isEmpty) {
+                setStateDialog(() {
+                  error = 'Master name is required.';
+                });
+                return;
+              }
+
+              setStateDialog(() {
+                saving = true;
+                error = null;
+              });
+
+              try {
+                final master = await widget.api.createMaster(
+                  name: name,
+                  contactNumber: contactCtrl.text.trim().isEmpty
+                      ? null
+                      : contactCtrl.text.trim(),
+                  notes: notesCtrl.text.trim().isEmpty
+                      ? null
+                      : notesCtrl.text.trim(),
+                );
+                Navigator.of(dialogContext).pop(master);
+              } on ApiException catch (e) {
+                setStateDialog(() {
+                  saving = false;
+                  error = e.message;
+                });
+              }
+            }
+
+            return AlertDialog(
+              title: const Text('Add master'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: nameCtrl,
+                      textCapitalization: TextCapitalization.words,
+                      decoration: const InputDecoration(
+                        labelText: 'Name',
+                        hintText: 'Master name',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: contactCtrl,
+                      keyboardType: TextInputType.phone,
+                      decoration: const InputDecoration(
+                        labelText: 'Contact (optional)',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: notesCtrl,
+                      maxLines: 2,
+                      decoration: const InputDecoration(
+                        labelText: 'Notes (optional)',
+                      ),
+                    ),
+                    if (error != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        error!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: saving
+                      ? null
+                      : () {
+                          Navigator.of(dialogContext).pop();
+                        },
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: saving ? null : submit,
+                  child: saving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    ).then((value) => created = value);
+
+    nameCtrl.dispose();
+    contactCtrl.dispose();
+    notesCtrl.dispose();
+
+    if (!mounted) return;
+    if (created != null) {
+      setState(() {
+        _masters.removeWhere((element) => element.id == created!.id);
+        _masters.insert(0, created!);
+        _selectedMaster = created;
+        _mastersError = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Master ${created!.masterName} created.')),
+      );
+    }
+  }
+
+  String _formatDateTime(DateTime? value) {
+    if (value == null) return '—';
+    final dt = value.toLocal();
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    return '${dt.year}-${twoDigits(dt.month)}-${twoDigits(dt.day)} '
+        '${twoDigits(dt.hour)}:${twoDigits(dt.minute)}';
+  }
+
+  String? _stageInstructions() {
+    switch (widget.stage) {
+      case 'back_pocket':
+        return 'Scan or enter the lot number to assign all available bundles to the selected master.';
+      case 'stitching_master':
+        return 'Assign bundles for the lot to the stitching master you select.';
+      case 'jeans_assembly':
+        return 'Register each bundle after back pocket and stitching are complete. You can also reject individual pieces if needed.';
+      case 'washing':
+        return 'Move an entire lot to washing. Only lots with open jeans assembly bundles can be processed.';
+      case 'washing_in':
+        return 'Record pieces returning from washing or reject damaged pieces by code.';
+      case 'finishing':
+        return 'Complete the bundle after washing_in has recorded every piece. Optionally note rejected pieces.';
+      default:
+        return null;
+    }
+  }
+
+  Widget _buildStageIntroCard(BuildContext context) {
+    final theme = Theme.of(context);
+    final instruction = _stageInstructions();
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Hello, ${widget.user.username}',
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'You are signed in as ${widget.user.role} for the $_stageTitle stage.',
+              style: theme.textTheme.bodyMedium,
+            ),
+            if (instruction != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                instruction,
+                style: theme.textTheme.bodyMedium?.copyWith(height: 1.5),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSubmitTab(BuildContext context) {
+    final theme = Theme.of(context);
+    return RefreshIndicator(
+      onRefresh: _handleRefresh,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        children: [
+          _buildStageIntroCard(context),
+          const SizedBox(height: 16),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Submit entry',
+                    style: theme.textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _codeCtrl,
+                    textInputAction: TextInputAction.done,
+                    decoration: InputDecoration(
+                      labelText: _codeLabel,
+                      hintText: _codeHint,
+                      suffixIcon: _supportsBundleLookup
+                          ? IconButton(
+                              tooltip: 'Lookup bundle',
+                              icon: _loadingBundle
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.search),
+                              onPressed: _loadingBundle ? null : _lookupBundle,
+                            )
+                          : null,
+                    ),
+                    onSubmitted: (_) => _submitEntry(),
+                  ),
+                  const SizedBox(height: 16),
+                  if (_needsMaster) ...[
+                    if (_loadingMasters)
+                      const LinearProgressIndicator(minHeight: 2),
+                    if (_masters.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<int>(
+                        value: _selectedMaster?.id,
+                        decoration: const InputDecoration(labelText: 'Master'),
+                        items: _masters
+                            .map(
+                              (master) => DropdownMenuItem<int>(
+                                value: master.id,
+                                child: Text(master.masterName),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setState(() {
+                            _selectedMaster = _masters.firstWhere(
+                              (element) => element.id == value,
+                            );
+                          });
+                        },
+                      ),
+                    ] else ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'No masters found. Add one to continue.',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.error,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        OutlinedButton.icon(
+                          icon: const Icon(Icons.person_add_alt),
+                          label: const Text('Add master'),
+                          onPressed: _promptCreateMaster,
+                        ),
+                        const SizedBox(width: 12),
+                        IconButton(
+                          tooltip: 'Refresh masters',
+                          icon: const Icon(Icons.refresh),
+                          onPressed: _loadingMasters ? null : _loadMasters,
+                        ),
+                      ],
+                    ),
+                    if (_mastersError != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        _mastersError!,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.error,
+                        ),
+                      ),
+                    ],
+                  ],
+                  if (_needsMaster) const SizedBox(height: 16),
+                  TextField(
+                    controller: _remarkCtrl,
+                    maxLines: 2,
+                    decoration: const InputDecoration(
+                      labelText: 'Remark (optional)',
+                    ),
+                  ),
+                  if (_supportsRejectedPieces) ...[
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _rejectedCtrl,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                        labelText: 'Rejected piece codes (optional)',
+                        hintText: 'Separate codes with commas or new lines',
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      FilledButton.icon(
+                        onPressed: _submitting ? null : _submitEntry,
+                        icon: _submitting
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.check_circle_outline),
+                        label: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          child: Text(_submitting ? 'Submitting…' : 'Submit'),
+                        ),
+                      ),
+                      if (_supportsBundleLookup) ...[
+                        const SizedBox(width: 12),
+                        OutlinedButton.icon(
+                          icon: const Icon(Icons.search),
+                          label: const Text('Lookup bundle'),
+                          onPressed: _loadingBundle ? null : _lookupBundle,
+                        ),
+                      ],
+                    ],
+                  ),
+                  if (_submitError != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      _submitError!,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.error,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          if (_bundleInfo != null) ...[
+            const SizedBox(height: 16),
+            _buildBundleCard(context),
+          ],
+          if (_bundleError != null) ...[
+            const SizedBox(height: 16),
+            Text(
+              _bundleError!,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.error,
+              ),
+            ),
+          ],
+          if (_lastResult != null) ...[
+            const SizedBox(height: 16),
+            _buildResultCard(context),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildResultCard(BuildContext context) {
+    final theme = Theme.of(context);
+    final result = _lastResult!;
+    final pretty = const JsonEncoder.withIndent('  ').convert(result.data);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Latest response',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Stage: ${result.stage}',
+              style: theme.textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceVariant.withOpacity(0.5),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: SelectableText(pretty),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBundleCard(BuildContext context) {
+    final theme = Theme.of(context);
+    final info = _bundleInfo!;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Bundle ${info.bundleCode}',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 16,
+              runSpacing: 8,
+              children: [
+                _buildDetailRow('Lot', info.lotNumber),
+                _buildDetailRow('Pieces in bundle', info.piecesInBundle.toString()),
+                _buildDetailRow('Piece codes', info.pieceCount.toString()),
+                if (info.sku != null && info.sku!.isNotEmpty)
+                  _buildDetailRow('SKU', info.sku!),
+                if (info.fabricType != null && info.fabricType!.isNotEmpty)
+                  _buildDetailRow('Fabric', info.fabricType!),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEntriesTab(BuildContext context) {
+    if (_loadingEntries && _entries.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_entriesError != null && _entries.isEmpty) {
+      return _ErrorState(message: _entriesError!, onRetry: _loadEntries);
+    }
+
+    return RefreshIndicator(
+      onRefresh: _loadEntries,
+      child: ListView.separated(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        itemCount: _entries.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 12),
+        itemBuilder: (context, index) {
+          final entry = _entries[index];
+          return _buildEntryCard(context, entry);
+        },
+      ),
+    );
+  }
+
+  Widget _buildEntryCard(BuildContext context, ProductionFlowEntry entry) {
+    final theme = Theme.of(context);
+    final statusText = (entry.eventStatus ??
+            (entry.isClosed ? 'closed' : 'open'))
+        .toUpperCase();
+    final statusColor = entry.isClosed
+        ? theme.colorScheme.secondary
+        : theme.colorScheme.primary;
+
+    final details = <Widget>[];
+    void addDetail(String label, String? value) {
+      if (value == null || value.isEmpty) return;
+      details.add(_buildDetailRow(label, value));
+    }
+
+    addDetail(_codeLabel, entry.displayCode);
+    addDetail('Lot', entry.lotNumber);
+    addDetail('Bundle', entry.bundleCode);
+    addDetail('Piece', entry.pieceCode);
+    addDetail('Master', entry.masterName);
+    addDetail('User', entry.userUsername);
+    addDetail('Created', _formatDateTime(entry.createdAt));
+    if (entry.closedAt != null) {
+      addDetail('Closed', _formatDateTime(entry.closedAt));
+    }
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        entry.displayCode,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Recorded ${_formatDateTime(entry.createdAt)}',
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                Chip(
+                  label: Text(statusText),
+                  backgroundColor: statusColor.withOpacity(0.1),
+                  labelStyle: theme.textTheme.labelMedium?.copyWith(
+                    color: statusColor,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+            if (details.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 16,
+                runSpacing: 8,
+                children: details,
+              ),
+            ],
+            if (entry.remark != null && entry.remark!.trim().isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _buildDetailRow('Remark', entry.remark!, wrap: true),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetailRow(String label, String value, {bool wrap = false}) {
+    final theme = Theme.of(context);
+    return SizedBox(
+      width: wrap ? double.infinity : 180,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: theme.textTheme.labelMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+              color: theme.colorScheme.primary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: theme.textTheme.bodyMedium,
+            maxLines: wrap ? null : 2,
+            overflow: wrap ? TextOverflow.visible : TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text('$_stageTitle workspace'),
+          actions: [
+            IconButton(
+              tooltip: 'Refresh',
+              icon: const Icon(Icons.refresh),
+              onPressed: () {
+                _handleRefresh();
+              },
+            ),
+            IconButton(
+              tooltip: 'Logout',
+              icon: const Icon(Icons.logout),
+              onPressed: widget.onLogout,
+            ),
+          ],
+          bottom: const TabBar(
+            tabs: [
+              Tab(text: 'Submit entry'),
+              Tab(text: 'Recent entries'),
+            ],
+          ),
+        ),
+        body: TabBarView(
+          children: [
+            _buildSubmitTab(context),
+            _buildEntriesTab(context),
           ],
         ),
       ),
