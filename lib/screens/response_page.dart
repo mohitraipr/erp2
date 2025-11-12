@@ -177,8 +177,8 @@ class _ResponsePageState extends State<ResponsePage> {
   };
 
   static const Map<String, String> _stageCodeLabels = {
-    'back_pocket': 'Bundle code',
-    'stitching_master': 'Bundle code',
+    'back_pocket': 'Lot number',
+    'stitching_master': 'Lot number',
     'jeans_assembly': 'Bundle code',
     'washing': 'Lot number',
     'washing_in': 'Piece code',
@@ -186,10 +186,13 @@ class _ResponsePageState extends State<ResponsePage> {
   };
 
   static const Set<String> _bundleStages = {
-    'back_pocket',
-    'stitching_master',
     'jeans_assembly',
     'finishing',
+  };
+
+  static const Set<String> _stagesWithRejections = {
+    'jeans_assembly',
+    'washing_in',
   };
 
   final GlobalKey<FormState> _lotFormKey = GlobalKey<FormState>();
@@ -209,6 +212,7 @@ class _ResponsePageState extends State<ResponsePage> {
 
   final TextEditingController _productionCodeCtrl = TextEditingController();
   final TextEditingController _productionRemarkCtrl = TextEditingController();
+  final TextEditingController _rejectedPiecesCtrl = TextEditingController();
 
   final List<SizeEntryData> _sizes = [];
   final List<RollSelection> _selectedRolls = [];
@@ -283,6 +287,12 @@ class _ResponsePageState extends State<ResponsePage> {
     return _bundleStages.contains(stage);
   }
 
+  bool get _stageAllowsRejections {
+    final stage = _productionStage;
+    if (stage == null) return false;
+    return _stagesWithRejections.contains(stage);
+  }
+
   int get _bundleSize => int.tryParse(_bundleSizeCtrl.text.trim()) ?? 0;
 
   int get _totalLayers =>
@@ -341,6 +351,7 @@ class _ResponsePageState extends State<ResponsePage> {
     _masterNotesCtrl.dispose();
     _productionCodeCtrl.dispose();
     _productionRemarkCtrl.dispose();
+    _rejectedPiecesCtrl.dispose();
     for (final size in _sizes) {
       size.dispose();
     }
@@ -473,6 +484,32 @@ class _ResponsePageState extends State<ResponsePage> {
     }
   }
 
+  List<String> _parseRejectedPiecesInput(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) {
+      return const <String>[];
+    }
+
+    final tokens = trimmed
+        .split(RegExp('[\\s,]+'))
+        .map((token) => token.trim().toUpperCase())
+        .where((token) => token.isNotEmpty)
+        .toList();
+
+    if (tokens.isEmpty) {
+      return const <String>[];
+    }
+
+    final seen = <String>{};
+    final result = <String>[];
+    for (final token in tokens) {
+      if (seen.add(token)) {
+        result.add(token);
+      }
+    }
+    return result;
+  }
+
   Future<void> _submitProductionEntry() async {
     if (_submittingProduction) return;
     final stage = _productionStage;
@@ -480,6 +517,9 @@ class _ResponsePageState extends State<ResponsePage> {
 
     final code = _productionCodeCtrl.text.trim().toUpperCase();
     final remark = _productionRemarkCtrl.text.trim();
+    final rejectedPieces = _stageAllowsRejections
+        ? _parseRejectedPiecesInput(_rejectedPiecesCtrl.text)
+        : const <String>[];
 
     if (_stageRequiresMaster && _selectedMasterId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -488,9 +528,13 @@ class _ResponsePageState extends State<ResponsePage> {
       return;
     }
 
-    if (code.isEmpty) {
+    if (code.isEmpty && rejectedPieces.isEmpty) {
+      final label = _productionCodeLabel.toLowerCase();
+      final message = _stageAllowsRejections
+          ? 'Enter a $label or at least one rejected piece code.'
+          : 'Please enter a $label.';
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Please enter a ${_productionCodeLabel.toLowerCase()}.')),
+        SnackBar(content: Text(message)),
       );
       return;
     }
@@ -501,6 +545,7 @@ class _ResponsePageState extends State<ResponsePage> {
         code: code,
         remark: remark.isEmpty ? null : remark,
         masterId: _selectedMasterId,
+        rejectedPieces: rejectedPieces.isEmpty ? null : rejectedPieces,
       );
 
       if (!mounted) return;
@@ -514,6 +559,7 @@ class _ResponsePageState extends State<ResponsePage> {
       });
       _productionCodeCtrl.clear();
       _productionRemarkCtrl.clear();
+      _rejectedPiecesCtrl.clear();
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Entry submitted for $stage.')),
@@ -1119,6 +1165,22 @@ class _ResponsePageState extends State<ResponsePage> {
               const SizedBox(height: 12),
               _buildMasterSelectionField(theme),
             ],
+            if (_stageAllowsRejections) ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: _rejectedPiecesCtrl,
+                textCapitalization: TextCapitalization.characters,
+                minLines: 1,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Rejected piece codes (optional)',
+                  alignLabelWithHint: true,
+                  helperText:
+                      'Separate multiple codes with commas or new lines.',
+                  prefixIcon: Icon(Icons.report_problem_outlined),
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             TextField(
               controller: _productionRemarkCtrl,
@@ -1350,14 +1412,8 @@ class _ResponsePageState extends State<ResponsePage> {
                 ),
               ),
             ],
-            if (data != null && data.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 12,
-                runSpacing: 8,
-                children: _buildDataChips(data),
-              ),
-            ],
+            if (data != null && data.isNotEmpty)
+              ...[const SizedBox(height: 12), ..._buildResultDetailWidgets(theme, data)],
           ],
         ),
       ),
@@ -1704,20 +1760,180 @@ class _ResponsePageState extends State<ResponsePage> {
   String _stageInstruction(String stage) {
     switch (stage) {
       case 'back_pocket':
-        return 'Scan or enter the bundle code as soon as back pocket stitching is complete.';
+        return 'Enter the lot number once all sizes are ready so every bundle moves to back pocket.';
       case 'stitching_master':
-        return 'Submit the bundle code once stitching is done to notify downstream stages.';
+        return 'Submit the lot number after stitching is complete to release every bundle to the next stage.';
       case 'jeans_assembly':
-        return 'Only submit bundles that have been recorded by both back pocket and stitching teams.';
+        return 'Submit the bundle code after both back pocket and stitching teams finish, or log any rejected piece codes.';
       case 'washing':
         return 'Enter the lot number to register all pieces leaving jeans assembly for washing.';
       case 'washing_in':
-        return 'Scan the individual piece code when it returns from washing.';
+        return 'Scan the piece code when it returns from washing, or record rejects that cannot continue.';
       case 'finishing':
         return 'Submit the bundle code after confirming every piece has passed washing in.';
       default:
         return 'Submit the production code assigned to your station to update the flow.';
     }
+  }
+
+  List<Widget> _buildResultDetailWidgets(
+    ThemeData theme,
+    Map<String, dynamic> data,
+  ) {
+    final remaining = <String, dynamic>{};
+    data.forEach((key, value) {
+      if (value != null) {
+        remaining[key.toString()] = value;
+      }
+    });
+
+    dynamic assignments = remaining.remove('assignments');
+    assignments ??= remaining.remove('sizeAssignments');
+    assignments ??= remaining.remove('assignmentSummary');
+    if (assignments is Map) {
+      assignments = assignments.values;
+    }
+
+    dynamic rejected = remaining.remove('rejectedPieces');
+    rejected ??= remaining.remove('rejected_piece_codes');
+    rejected ??= remaining.remove('rejectPieces');
+    if (rejected is Map) {
+      rejected = rejected.values;
+    }
+
+    final widgets = <Widget>[];
+
+    if (remaining.isNotEmpty) {
+      widgets.add(
+        Wrap(
+          spacing: 12,
+          runSpacing: 8,
+          children: _buildDataChips(remaining),
+        ),
+      );
+    }
+
+    final assignmentLabels = <String>[];
+    if (assignments is Iterable) {
+      for (final item in assignments) {
+        if (item is Map) {
+          final map = Map<String, dynamic>.from(item as Map);
+          final sizeLabel =
+              (map['sizeLabel'] ?? map['size_label'] ?? '').toString().trim();
+          final sizeId = map['sizeId'] ?? map['size_id'];
+          final bundlesRaw = map['bundles'] ??
+              map['bundleCount'] ??
+              map['bundle_count'];
+          final masterName =
+              (map['masterName'] ?? map['master_name'] ?? '').toString().trim();
+
+          final parts = <String>[];
+          if (sizeLabel.isNotEmpty) {
+            parts.add(sizeLabel);
+          } else if (sizeId != null) {
+            parts.add('Size $sizeId');
+          }
+
+          if (bundlesRaw != null) {
+            final bundleText = bundlesRaw.toString();
+            if (bundleText.isNotEmpty) {
+              final parsed = int.tryParse(bundleText);
+              final bundleLabel = parsed == 1
+                  ? '1 bundle'
+                  : '$bundleText bundles';
+              parts.add(bundleLabel);
+            }
+          }
+
+          if (masterName.isNotEmpty) {
+            parts.add('Master $masterName');
+          }
+
+          if (parts.isNotEmpty) {
+            assignmentLabels.add(parts.join(' • '));
+          }
+        } else if (item != null) {
+          final value = item.toString().trim();
+          if (value.isNotEmpty) {
+            assignmentLabels.add(value);
+          }
+        }
+      }
+    }
+
+    if (assignmentLabels.isNotEmpty) {
+      if (widgets.isNotEmpty) {
+        widgets.add(const SizedBox(height: 12));
+      }
+      widgets.add(
+        Text(
+          'Assignments',
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      );
+      widgets.add(const SizedBox(height: 8));
+      widgets.add(
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            for (final label in assignmentLabels) Chip(label: Text(label)),
+          ],
+        ),
+      );
+    }
+
+    final rejectedLabels = <String>[];
+    if (rejected is Iterable) {
+      final seen = <String>{};
+      for (final item in rejected) {
+        if (item == null) continue;
+        final value = item.toString().trim();
+        if (value.isEmpty) continue;
+        final normalized = value.toUpperCase();
+        if (seen.add(normalized)) {
+          rejectedLabels.add(normalized);
+        }
+      }
+    }
+
+    if (rejectedLabels.isNotEmpty) {
+      if (widgets.isNotEmpty) {
+        widgets.add(const SizedBox(height: 12));
+      }
+      widgets.add(
+        Text(
+          'Rejected pieces',
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      );
+      widgets.add(const SizedBox(height: 8));
+      widgets.add(
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            for (final code in rejectedLabels) Chip(label: Text(code)),
+          ],
+        ),
+      );
+    }
+
+    if (widgets.isEmpty) {
+      widgets.add(
+        Wrap(
+          spacing: 12,
+          runSpacing: 8,
+          children: _buildDataChips(data),
+        ),
+      );
+    }
+
+    return widgets;
   }
 
   List<Widget> _buildDataChips(Map<String, dynamic> data) {
