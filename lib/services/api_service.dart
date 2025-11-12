@@ -5,9 +5,11 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/api_lot.dart';
+import '../models/bundle_info.dart';
 import '../models/fabric_roll.dart';
 import '../models/filter_options.dart';
 import '../models/login_response.dart';
+import '../models/production_entry.dart';
 
 class ApiException implements Exception {
   final String message;
@@ -106,6 +108,173 @@ class ApiService {
       rethrow;
     } catch (e) {
       debugPrint('login() unexpected error: $e');
+      throw ApiException('Unexpected error: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> submitProductionFlowEntry(
+      Map<String, dynamic> payload) async {
+    final uri = Uri.parse('$_baseUrl/api/production-flow/entries');
+    final sanitized = <String, dynamic>{};
+    payload.forEach((key, value) {
+      if (value == null) return;
+      if (value is String && value.trim().isEmpty) return;
+      sanitized[key] = value;
+    });
+
+    try {
+      final res = await _client
+          .post(
+            uri,
+            headers: _authorizedHeaders(
+              base: const {'Content-Type': 'application/json'},
+            ),
+            body: jsonEncode(sanitized),
+          )
+          .timeout(const Duration(seconds: 30));
+
+      final status = res.statusCode;
+      final raw = _safeDecodeUtf8(res.bodyBytes);
+      final Map<String, dynamic>? json = _tryParseJson(raw);
+
+      if (status >= 200 && status < 300 && json != null) {
+        return json;
+      }
+
+      final msg = _extractMessage(json, raw) ??
+          'Failed to submit production entry (status: $status).';
+      debugPrint('submitProductionFlowEntry() error [$status]: $raw');
+      throw ApiException(msg);
+    } on TimeoutException catch (e) {
+      debugPrint('submitProductionFlowEntry() timeout: $e');
+      throw ApiException('Request timed out. Please try again.');
+    } on SocketException catch (e) {
+      debugPrint('submitProductionFlowEntry() network error: $e');
+      throw ApiException('No internet connection.');
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      debugPrint('submitProductionFlowEntry() unexpected error: $e');
+      throw ApiException('Unexpected error: $e');
+    }
+  }
+
+  Future<List<ProductionEntry>> fetchProductionFlowEntries({
+    String? stage,
+    int limit = 200,
+  }) async {
+    final query = <String, String>{'limit': limit.toString()};
+    if (stage != null && stage.isNotEmpty) {
+      query['stage'] = stage;
+    }
+
+    final uri = Uri.parse('$_baseUrl/api/production-flow/entries')
+        .replace(queryParameters: query);
+
+    try {
+      final res = await _client
+          .get(uri, headers: _authorizedHeaders())
+          .timeout(const Duration(seconds: 20));
+
+      final status = res.statusCode;
+      final raw = _safeDecodeUtf8(res.bodyBytes);
+      final Map<String, dynamic>? json = _tryParseJson(raw);
+
+      if (status >= 200 && status < 300) {
+        final data = json?['data'];
+        final entries = <ProductionEntry>[];
+
+        dynamic resolveStageList(dynamic container) {
+          if (container is Map) {
+            if (stage != null && stage.isNotEmpty) {
+              final normalized = stage.toLowerCase();
+              for (final entry in container.entries) {
+                final key = entry.key.toString().toLowerCase();
+                if (key == normalized) {
+                  return entry.value;
+                }
+              }
+            } else {
+              return container.values;
+            }
+          }
+          return container;
+        }
+
+        void addEntries(dynamic value) {
+          if (value is Iterable) {
+            for (final item in value) {
+              addEntries(item);
+            }
+            return;
+          }
+          if (value is Map<String, dynamic>) {
+            entries.add(ProductionEntry.fromJson(value));
+          }
+        }
+
+        final stageData = resolveStageList(data);
+        addEntries(stageData);
+        return entries;
+      }
+
+      final msg = _extractMessage(json, raw) ??
+          'Failed to fetch production entries (status: $status).';
+      debugPrint('fetchProductionFlowEntries() error [$status]: $raw');
+      throw ApiException(msg);
+    } on TimeoutException catch (e) {
+      debugPrint('fetchProductionFlowEntries() timeout: $e');
+      throw ApiException('Request timed out. Check your connection.');
+    } on SocketException catch (e) {
+      debugPrint('fetchProductionFlowEntries() network error: $e');
+      throw ApiException('No internet connection.');
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      debugPrint('fetchProductionFlowEntries() unexpected error: $e');
+      throw ApiException('Unexpected error: $e');
+    }
+  }
+
+  Future<BundleInfo> fetchBundleDetails(String bundleCode) async {
+    final normalized = bundleCode.trim();
+    if (normalized.isEmpty) {
+      throw ApiException('Bundle code is required.');
+    }
+
+    final uri = Uri.parse(
+        '$_baseUrl/api/production-flow/bundles/${Uri.encodeComponent(normalized)}');
+
+    try {
+      final res = await _client
+          .get(uri, headers: _authorizedHeaders())
+          .timeout(const Duration(seconds: 20));
+
+      final status = res.statusCode;
+      final raw = _safeDecodeUtf8(res.bodyBytes);
+      final Map<String, dynamic>? json = _tryParseJson(raw);
+
+      if (status >= 200 && status < 300 && json != null) {
+        final bundle = json['bundle'];
+        if (bundle is Map<String, dynamic>) {
+          return BundleInfo.fromJson(bundle);
+        }
+      }
+
+      final msg =
+          _extractMessage(json, raw) ?? 'Failed to fetch bundle (status: $status).';
+      debugPrint('fetchBundleDetails() error [$status]: $raw');
+      throw ApiException(msg);
+    } on TimeoutException catch (e) {
+      debugPrint('fetchBundleDetails() timeout: $e');
+      throw ApiException('Request timed out. Check your connection.');
+    } on SocketException catch (e) {
+      debugPrint('fetchBundleDetails() network error: $e');
+      throw ApiException('No internet connection.');
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      debugPrint('fetchBundleDetails() unexpected error: $e');
       throw ApiException('Unexpected error: $e');
     }
   }
