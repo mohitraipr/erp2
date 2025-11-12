@@ -397,7 +397,8 @@ class ApiService {
         return masters;
       }
 
-      final msg = _extractMessage(decoded is Map ? decoded : null, raw) ??
+      final msg =
+          _extractMessage(_asStringKeyedMap(decoded), raw) ??
           'Failed to fetch masters (status: $status).';
       debugPrint('fetchMasters() error [$status]: $raw');
       throw ApiException(msg);
@@ -562,7 +563,8 @@ class ApiService {
         }
       }
 
-      final msg = _extractMessage(decoded is Map ? decoded : null, raw) ??
+      final msg =
+          _extractMessage(_asStringKeyedMap(decoded), raw) ??
           'Failed to fetch production entries (status: $status).';
       debugPrint('fetchProductionFlowEntries() error [$status]: $raw');
       throw ApiException(msg);
@@ -729,6 +731,22 @@ class ApiService {
     } catch (_) {
       return null; // not JSON; could be HTML/text
     }
+  }
+
+  static Map<String, dynamic>? _asStringKeyedMap(dynamic value) {
+    if (value is Map<String, dynamic>) {
+      return value;
+    }
+    if (value is Map) {
+      final result = <String, dynamic>{};
+      value.forEach((key, dynamic v) {
+        if (key is String) {
+          result[key] = v;
+        }
+      });
+      return result;
+    }
+    return null;
   }
 
   /// Extract a human-friendly message from many possible API shapes.
