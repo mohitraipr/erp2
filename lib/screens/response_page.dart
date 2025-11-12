@@ -6,6 +6,7 @@ import '../models/filter_options.dart';
 import '../models/login_response.dart';
 import '../models/master_record.dart';
 import '../models/production_flow_entry.dart';
+import '../models/production_lot_preview.dart';
 import '../services/api_service.dart';
 import '../utils/download_helper.dart';
 import 'login_page.dart';
@@ -236,6 +237,10 @@ class _ResponsePageState extends State<ResponsePage> {
   bool _loadingBundleDetails = false;
   String? _bundleError;
   int? _selectedMasterId;
+  ProductionLotPreview? _lotPreview;
+  bool _loadingLotPreview = false;
+  String? _lotPreviewError;
+  final Map<int, int?> _lotSizeMasters = {};
 
   List<String> _genders = [];
   List<String> _categories = [];
@@ -291,6 +296,11 @@ class _ResponsePageState extends State<ResponsePage> {
     final stage = _productionStage;
     if (stage == null) return false;
     return _stagesWithRejections.contains(stage);
+  }
+
+  bool get _isLotAssignmentStage {
+    final stage = _productionStage;
+    return stage == 'back_pocket' || stage == 'stitching_master';
   }
 
   int get _bundleSize => int.tryParse(_bundleSizeCtrl.text.trim()) ?? 0;
@@ -398,9 +408,25 @@ class _ResponsePageState extends State<ResponsePage> {
               !_masters.any((master) => master.id == _selectedMasterId)) {
             _selectedMasterId = null;
           }
-          if (_selectedMasterId == null && _masters.isNotEmpty) {
+          if (!_isLotAssignmentStage &&
+              _selectedMasterId == null &&
+              _masters.isNotEmpty) {
             _selectedMasterId = _masters.first.id;
           }
+        }
+        if (_lotSizeMasters.isNotEmpty) {
+          final validIds = _masters.map((master) => master.id).toSet();
+          final updated = <int, int?>{};
+          _lotSizeMasters.forEach((sizeId, masterId) {
+            if (masterId != null && !validIds.contains(masterId)) {
+              updated[sizeId] = null;
+            } else {
+              updated[sizeId] = masterId;
+            }
+          });
+          _lotSizeMasters
+            ..clear()
+            ..addAll(updated);
         }
       });
     } on ApiException catch (e) {
@@ -468,7 +494,7 @@ class _ResponsePageState extends State<ResponsePage> {
     try {
       final entries = await widget.api.fetchProductionFlowEntries(
         stage: stage,
-        limit: 200,
+        limit: 1000,
       );
       if (!mounted) return;
       setState(() {
@@ -510,6 +536,48 @@ class _ResponsePageState extends State<ResponsePage> {
     return result;
   }
 
+  List<Map<String, dynamic>> _buildLotAssignmentPayload() {
+    final preview = _lotPreview;
+    if (preview == null) return const [];
+    if (preview.sizes.isEmpty) return const [];
+
+    final sizeById = <int, ProductionLotSize>{
+      for (final size in preview.sizes) size.sizeId: size,
+    };
+
+    final payload = <Map<String, dynamic>>[];
+    _lotSizeMasters.forEach((sizeId, masterId) {
+      final size = sizeById[sizeId];
+      if (size == null) {
+        return;
+      }
+      if (size.pendingBundles <= 0) {
+        return;
+      }
+      if (masterId == null) {
+        return;
+      }
+      payload.add({
+        'sizeId': size.sizeId,
+        'sizeLabel': size.sizeLabel,
+        'masterId': masterId,
+      });
+    });
+
+    return payload;
+  }
+
+  bool get _hasLotAssignmentSelection {
+    if (_lotPreview == null) return false;
+    return _buildLotAssignmentPayload().isNotEmpty;
+  }
+
+  void _clearLotPreviewState() {
+    _lotPreview = null;
+    _lotPreviewError = null;
+    _lotSizeMasters.clear();
+  }
+
   Future<void> _submitProductionEntry() async {
     if (_submittingProduction) return;
     final stage = _productionStage;
@@ -521,11 +589,41 @@ class _ResponsePageState extends State<ResponsePage> {
         ? _parseRejectedPiecesInput(_rejectedPiecesCtrl.text)
         : const <String>[];
 
-    if (_stageRequiresMaster && _selectedMasterId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Select a master before submitting.')),
-      );
-      return;
+    List<Map<String, dynamic>>? assignments;
+    int? masterId = _selectedMasterId;
+
+    if (_stageRequiresMaster) {
+      if (_isLotAssignmentStage) {
+        if (code.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Enter a lot number before submitting.')),
+          );
+          return;
+        }
+        final preview = _lotPreview;
+        if (preview == null || preview.lotNumber.toUpperCase() != code) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Load the lot details and assign masters before submitting.')),
+          );
+          return;
+        }
+        final payload = _buildLotAssignmentPayload();
+        if (payload.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Select a master for at least one pending size.')),
+          );
+          return;
+        }
+        assignments = payload;
+        masterId = null;
+      } else {
+        if (_selectedMasterId == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Select a master before submitting.')),
+          );
+          return;
+        }
+      }
     }
 
     if (code.isEmpty && rejectedPieces.isEmpty) {
@@ -544,7 +642,8 @@ class _ResponsePageState extends State<ResponsePage> {
       final result = await widget.api.submitProductionFlowEntry(
         code: code,
         remark: remark.isEmpty ? null : remark,
-        masterId: _selectedMasterId,
+        masterId: masterId,
+        assignments: assignments,
         rejectedPieces: rejectedPieces.isEmpty ? null : rejectedPieces,
       );
 
@@ -556,6 +655,9 @@ class _ResponsePageState extends State<ResponsePage> {
         _lastProductionResult = result;
         _bundleDetails = null;
         _bundleError = null;
+        if (_isLotAssignmentStage) {
+          _clearLotPreviewState();
+        }
       });
       _productionCodeCtrl.clear();
       _productionRemarkCtrl.clear();
@@ -606,6 +708,71 @@ class _ResponsePageState extends State<ResponsePage> {
     } finally {
       if (mounted) {
         setState(() => _loadingBundleDetails = false);
+      }
+    }
+  }
+
+  Future<void> _loadLotPreview({bool refresh = false}) async {
+    if (!_isLotAssignmentStage) {
+      return;
+    }
+
+    final code = _productionCodeCtrl.text.trim().toUpperCase();
+    if (code.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a lot number to continue.')),
+      );
+      return;
+    }
+
+    if (!refresh &&
+        _lotPreview != null &&
+        _lotPreview!.lotNumber.toUpperCase() == code) {
+      return;
+    }
+
+    setState(() {
+      _loadingLotPreview = true;
+      if (!refresh) {
+        _lotPreviewError = null;
+      }
+    });
+
+    try {
+      final preview = await widget.api.fetchProductionLotPreview(code);
+      if (!mounted) return;
+      setState(() {
+        final previousSelections = Map<int, int?>.from(_lotSizeMasters);
+        _lotPreview = preview;
+        _lotPreviewError = null;
+        _lotSizeMasters.clear();
+        final validMasterIds = _masters.map((m) => m.id).toSet();
+        final defaultMasterId =
+            previousSelections.isEmpty && _masters.length == 1 ? _masters.first.id : null;
+        for (final size in preview.sizes) {
+          if (size.pendingBundles <= 0) {
+            continue;
+          }
+          final previous = previousSelections[size.sizeId];
+          if (previous != null && validMasterIds.contains(previous)) {
+            _lotSizeMasters[size.sizeId] = previous;
+          } else if (defaultMasterId != null) {
+            _lotSizeMasters[size.sizeId] = defaultMasterId;
+          } else {
+            _lotSizeMasters[size.sizeId] = null;
+          }
+        }
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _lotPreviewError = e.message;
+        _lotPreview = null;
+        _lotSizeMasters.clear();
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _loadingLotPreview = false);
       }
     }
   }
@@ -1016,8 +1183,11 @@ class _ResponsePageState extends State<ResponsePage> {
   }
 
   Widget _buildProductionWorkspace(BuildContext context) {
-    final tabLabels = <String>['Production flow'];
-    final tabViews = <Widget>[_buildProductionFlowTab(context)];
+    final tabLabels = <String>['Production flow', 'Reports'];
+    final tabViews = <Widget>[
+      _buildProductionFlowTab(context),
+      _buildProductionReportTab(context),
+    ];
     if (_canManageMasters) {
       tabLabels.add('Masters');
       tabViews.add(_buildMastersTab(context));
@@ -1029,6 +1199,9 @@ class _ResponsePageState extends State<ResponsePage> {
         icon: const Icon(Icons.refresh),
         onPressed: () {
           _loadProductionEntries();
+          if (_isLotAssignmentStage && _lotPreview != null) {
+            _loadLotPreview(refresh: true);
+          }
           if (_canManageMasters || _stageRequiresMaster) {
             _loadMasters();
           }
@@ -1085,11 +1258,168 @@ class _ResponsePageState extends State<ResponsePage> {
       ]);
     }
 
-    children.addAll([
-      const SizedBox(height: 16),
-      _buildProductionEntriesCard(context),
-      const SizedBox(height: 32),
-    ]);
+    if (_isLotAssignmentStage) {
+      children.addAll([
+        const SizedBox(height: 16),
+        _buildLotPreviewCard(context),
+      ]);
+    }
+
+    children.add(const SizedBox(height: 32));
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        if (_isLotAssignmentStage && _lotPreview != null) {
+          await _loadLotPreview(refresh: true);
+        }
+        if (_stageRequiresMaster) {
+          await _loadMasters();
+        }
+      },
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        children: children,
+      ),
+    );
+  }
+
+  Widget _buildProductionReportTab(BuildContext context) {
+    if (_loadingProductionEntries && _productionEntries.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_productionEntriesError != null && _productionEntries.isEmpty) {
+      return _ErrorState(
+        message: _productionEntriesError!,
+        onRetry: _loadProductionEntries,
+      );
+    }
+
+    final stage = _productionStage;
+    if (stage == null) {
+      return const Center(child: Text('No production stage assigned.'));
+    }
+
+    final theme = Theme.of(context);
+    final totalEntries = _productionEntries.length;
+    final totalOpen = _productionEntries.where((entry) => !entry.isClosed).length;
+    final totalClosed = totalEntries - totalOpen;
+
+    final summary = <String, dynamic>{
+      'Entries': totalEntries,
+      'Open': totalOpen,
+      'Closed': totalClosed,
+    };
+
+    final List<Widget> groups = [];
+    if (_productionEntries.isEmpty) {
+      groups.add(
+        Text(
+          'No submissions yet for ${_prettyStageName(stage)}.',
+          style: theme.textTheme.bodyMedium,
+        ),
+      );
+    } else if (_stageRequiresMaster) {
+      final grouped = <String, List<ProductionFlowEntry>>{};
+      for (final entry in _productionEntries) {
+        final label = (entry.masterName != null && entry.masterName!.trim().isNotEmpty)
+            ? entry.masterName!.trim()
+            : 'Unassigned';
+        grouped.putIfAbsent(label, () => []).add(entry);
+      }
+
+      final sorted = grouped.entries.toList()
+        ..sort((a, b) => a.key.toLowerCase().compareTo(b.key.toLowerCase()));
+      for (final entry in sorted) {
+        final masterName = entry.key;
+        final items = entry.value;
+        final open = items.where((item) => !item.isClosed).length;
+        final closed = items.length - open;
+        groups.add(
+          ExpansionTile(
+            title: Text(masterName),
+            subtitle: Text('Open: $open • Closed: $closed • Total: ${items.length}'),
+            children: [
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemBuilder: (context, index) =>
+                    _buildProductionEntryTile(context, items[index]),
+                separatorBuilder: (_, __) => const Divider(height: 20),
+                itemCount: items.length,
+              ),
+            ],
+          ),
+        );
+      }
+    } else {
+      final grouped = <String, List<ProductionFlowEntry>>{};
+      for (final entry in _productionEntries) {
+        final label = (entry.lotNumber != null && entry.lotNumber!.trim().isNotEmpty)
+            ? entry.lotNumber!.trim()
+            : 'Lot not set';
+        grouped.putIfAbsent(label, () => []).add(entry);
+      }
+
+      final sorted = grouped.entries.toList()
+        ..sort((a, b) => a.key.toLowerCase().compareTo(b.key.toLowerCase()));
+      for (final entry in sorted) {
+        final lotLabel = entry.key;
+        final items = entry.value;
+        final open = items.where((item) => !item.isClosed).length;
+        final closed = items.length - open;
+        groups.add(
+          ExpansionTile(
+            title: Text(lotLabel),
+            subtitle: Text('Open: $open • Closed: $closed • Total: ${items.length}'),
+            children: [
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemBuilder: (context, index) =>
+                    _buildProductionEntryTile(context, items[index]),
+                separatorBuilder: (_, __) => const Divider(height: 20),
+                itemCount: items.length,
+              ),
+            ],
+          ),
+        );
+      }
+    }
+
+    final summaryCard = Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  '${_prettyStageName(stage)} report',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const Spacer(),
+                TextButton.icon(
+                  icon: const Icon(Icons.download),
+                  label: const Text('Download CSV'),
+                  onPressed:
+                      _productionEntries.isEmpty ? null : _downloadProductionReportCsv,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              children: _buildDataChips(summary),
+            ),
+          ],
+        ),
+      ),
+    );
 
     return RefreshIndicator(
       onRefresh: () async {
@@ -1098,7 +1428,14 @@ class _ResponsePageState extends State<ResponsePage> {
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-        children: children,
+        children: [
+          summaryCard,
+          const SizedBox(height: 16),
+          ...groups,
+          const SizedBox(height: 16),
+          _buildProductionEntriesCard(context),
+          const SizedBox(height: 32),
+        ],
       ),
     );
   }
@@ -1135,9 +1472,21 @@ class _ResponsePageState extends State<ResponsePage> {
   Widget _buildProductionFormCard(BuildContext context, String stage) {
     final theme = Theme.of(context);
     final requiresMaster = _stageRequiresMaster;
-    final canSubmit = !_submittingProduction &&
-        (!requiresMaster ||
-            (_selectedMasterId != null && _masters.isNotEmpty));
+    bool canSubmit = !_submittingProduction;
+    if (requiresMaster) {
+      if (_isLotAssignmentStage) {
+        canSubmit = canSubmit &&
+            _masters.isNotEmpty &&
+            _lotPreview != null &&
+            _hasLotAssignmentSelection;
+      } else {
+        canSubmit = canSubmit &&
+            _selectedMasterId != null &&
+            _masters.isNotEmpty;
+      }
+    }
+    final showLotLoader = _isLotAssignmentStage;
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -1161,9 +1510,18 @@ class _ResponsePageState extends State<ResponsePage> {
               ),
               onSubmitted: (_) => _submitProductionEntry(),
             ),
-            if (requiresMaster) ...[
+            if (requiresMaster && !_isLotAssignmentStage) ...[
               const SizedBox(height: 12),
               _buildMasterSelectionField(theme),
+            ],
+            if (requiresMaster && _isLotAssignmentStage) ...[
+              const SizedBox(height: 12),
+              Text(
+                'Load the lot to assign masters per size below.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
             ],
             if (_stageAllowsRejections) ...[
               const SizedBox(height: 12),
@@ -1208,7 +1566,20 @@ class _ResponsePageState extends State<ResponsePage> {
                   ),
                   onPressed: canSubmit ? _submitProductionEntry : null,
                 ),
-                if (_stageRequiresBundle) ...[
+                if (showLotLoader) ...[
+                  const SizedBox(width: 12),
+                  OutlinedButton.icon(
+                    icon: _loadingLotPreview
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.assignment_ind_outlined),
+                    label: const Text('Load lot details'),
+                    onPressed: _loadingLotPreview ? null : () => _loadLotPreview(),
+                  ),
+                ] else if (_stageRequiresBundle) ...[
                   const SizedBox(width: 12),
                   OutlinedButton.icon(
                     icon: _loadingBundleDetails
@@ -1225,6 +1596,15 @@ class _ResponsePageState extends State<ResponsePage> {
                 ],
               ],
             ),
+            if (_lotPreviewError != null && showLotLoader) ...[
+              const SizedBox(height: 12),
+              Text(
+                _lotPreviewError!,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.error,
+                ),
+              ),
+            ],
             if (_bundleError != null && _stageRequiresBundle) ...[
               const SizedBox(height: 12),
               Text(
@@ -1357,6 +1737,234 @@ class _ResponsePageState extends State<ResponsePage> {
     );
   }
 
+  Widget _buildLotPreviewCard(BuildContext context) {
+    final theme = Theme.of(context);
+    if (_loadingLotPreview && _lotPreview == null) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: const [
+              SizedBox(height: 12),
+              CircularProgressIndicator(),
+              SizedBox(height: 12),
+              Text('Loading lot details…'),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final preview = _lotPreview;
+    if (preview == null) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Lot assignment overview',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Enter a lot number and choose “Load lot details” to review sizes and assign masters.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final summary = <String, dynamic>{
+      'Lot number': preview.lotNumber,
+      if (preview.totalPieces != null) 'Total pieces': preview.totalPieces,
+      'Total bundles': preview.totalBundles,
+      'Assigned bundles': preview.assignedBundles,
+      'Open bundles': preview.openBundles,
+      'Closed bundles': preview.closedBundles,
+    };
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Lot assignment overview',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              children: _buildDataChips(summary),
+            ),
+            const SizedBox(height: 16),
+            if (preview.sizes.isEmpty)
+              Text(
+                'No size data found for this lot.',
+                style: theme.textTheme.bodyMedium,
+              )
+            else ...[
+              for (final size in preview.sizes) ...[
+                _buildLotSizeTile(theme, size),
+                const SizedBox(height: 12),
+              ]
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLotSizeTile(ThemeData theme, ProductionLotSize size) {
+    final canAssign = size.pendingBundles > 0;
+    final selectedMasterId = _lotSizeMasters[size.sizeId];
+    final assignedNames = <String>{};
+    for (final bundle in size.bundles) {
+      if (!bundle.assigned) continue;
+      final master = bundle.masterName?.trim();
+      if (master != null && master.isNotEmpty) {
+        assignedNames.add(master);
+      }
+    }
+
+    final chips = <String, dynamic>{
+      if (size.patternCount != null) 'Patterns': size.patternCount,
+      'Bundles': size.totalBundles,
+      'Pending': size.pendingBundles,
+      'Assigned': size.assignedBundles,
+      'Open': size.openBundles,
+      'Closed': size.closedBundles,
+      if (size.totalPieces != null) 'Pieces': size.totalPieces,
+    };
+
+    Widget? assignmentControl;
+    if (canAssign) {
+      if (_masters.isEmpty && !_loadingMasters) {
+        assignmentControl = Text(
+          'No masters available. Create or refresh the master list first.',
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.error,
+          ),
+        );
+      } else {
+        assignmentControl = Row(
+          children: [
+            Expanded(
+              child: DropdownButtonFormField<int>(
+                value: selectedMasterId,
+                items: [
+                  for (final master in _masters)
+                    DropdownMenuItem<int>(
+                      value: master.id,
+                      child: Text(master.masterName),
+                    ),
+                ],
+                decoration: const InputDecoration(
+                  labelText: 'Assign master',
+                  prefixIcon: Icon(Icons.badge_outlined),
+                ),
+                onChanged: _loadingMasters
+                    ? null
+                    : (value) {
+                        if (!mounted) return;
+                        setState(() {
+                          _lotSizeMasters[size.sizeId] = value;
+                        });
+                      },
+              ),
+            ),
+            if (selectedMasterId != null) ...[
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: () {
+                  if (!mounted) return;
+                  setState(() {
+                    _lotSizeMasters[size.sizeId] = null;
+                  });
+                },
+                child: const Text('Clear'),
+              ),
+            ],
+          ],
+        );
+      }
+    }
+
+    final assignedSummary = size.assignedBundles == 0
+        ? 'Not yet assigned.'
+        : 'Assigned bundles: ${size.assignedBundles} '
+            '(${size.openBundles} open, ${size.closedBundles} closed)';
+
+    final masterSummary = assignedNames.isEmpty
+        ? null
+        : 'Masters: ${assignedNames.join(', ')}';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceVariant.withOpacity(0.3),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Size ${size.sizeLabel.isEmpty ? '—' : size.sizeLabel}',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            children: _buildDataChips(chips),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            assignedSummary,
+            style: theme.textTheme.bodyMedium,
+          ),
+          if (masterSummary != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              masterSummary,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+          if (assignmentControl != null) ...[
+            const SizedBox(height: 12),
+            assignmentControl,
+          ] else if (!canAssign) ...[
+            const SizedBox(height: 12),
+            Text(
+              'All bundles for this size have been submitted.',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildProductionResultCard(BuildContext context) {
     final result = _lastProductionResult;
     if (result == null) return const SizedBox.shrink();
@@ -1481,6 +2089,9 @@ class _ResponsePageState extends State<ResponsePage> {
     if (entry.lotNumber != null && entry.lotNumber!.isNotEmpty) {
       detailParts.add('Lot ${entry.lotNumber}');
     }
+    if (entry.sizeLabel != null && entry.sizeLabel!.isNotEmpty) {
+      detailParts.add('Size ${entry.sizeLabel}');
+    }
     if (entry.bundleCode != null && entry.bundleCode!.isNotEmpty) {
       detailParts.add('Bundle ${entry.bundleCode}');
     }
@@ -1563,6 +2174,65 @@ class _ResponsePageState extends State<ResponsePage> {
             )
           : null,
     );
+  }
+
+  Future<void> _downloadProductionReportCsv() async {
+    if (_productionEntries.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No data available to download.')),
+      );
+      return;
+    }
+
+    final stage = _productionStage ?? 'stage';
+    final buffer = StringBuffer();
+    buffer.writeln(
+        'Group,Code,Lot,Size,Bundle,Piece,Status,Closed,Master,Created At,Closed At,User');
+
+    for (final entry in _productionEntries) {
+      final group = _stageRequiresMaster
+          ? (entry.masterName?.trim().isNotEmpty == true
+              ? entry.masterName!.trim()
+              : 'Unassigned')
+          : (entry.lotNumber?.trim().isNotEmpty == true
+              ? entry.lotNumber!.trim()
+              : 'Lot not set');
+      final row = [
+        group,
+        entry.codeValue,
+        entry.lotNumber ?? '',
+        entry.sizeLabel ?? '',
+        entry.bundleCode ?? '',
+        entry.pieceCode ?? '',
+        entry.eventStatus ?? (entry.isClosed ? 'closed' : 'open'),
+        entry.isClosed ? 'Yes' : 'No',
+        entry.masterName ?? '',
+        entry.createdAt != null ? _formatDateTime(entry.createdAt!) : '',
+        entry.closedAt != null ? _formatDateTime(entry.closedAt!) : '',
+        entry.userUsername ?? '',
+      ].map(_csvEscape).join(',');
+      buffer.writeln(row);
+    }
+
+    final filename =
+        'production-${stage.replaceAll(' ', '-').toLowerCase()}-${DateTime.now().millisecondsSinceEpoch}.csv';
+    final saved = await saveCsvToDevice(filename, buffer.toString());
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(saved
+            ? 'Report downloaded as $filename.'
+            : 'CSV ready. Copy from clipboard if automatic download is unavailable.'),
+      ),
+    );
+  }
+
+  String _csvEscape(String value) {
+    if (value.contains(',') || value.contains('"') || value.contains('\n')) {
+      final escaped = value.replaceAll('"', '""');
+      return '"$escaped"';
+    }
+    return value;
   }
 
   Widget _buildMastersTab(BuildContext context) {

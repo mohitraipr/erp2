@@ -9,11 +9,15 @@ class ProductionFlowEntry {
   final String? lotNumber;
   final String? bundleCode;
   final String? pieceCode;
+  final String? sizeLabel;
+  final String? eventStatus;
   final int? piecesTotal;
   final int? userId;
   final String? userUsername;
   final String? userRole;
   final String? remark;
+  final int? masterId;
+  final String? masterName;
   final bool isClosed;
   final String? closedByStage;
   final int? closedByUserId;
@@ -33,11 +37,15 @@ class ProductionFlowEntry {
     this.lotNumber,
     this.bundleCode,
     this.pieceCode,
+    this.sizeLabel,
+    this.eventStatus,
     this.piecesTotal,
     this.userId,
     this.userUsername,
     this.userRole,
     this.remark,
+    this.masterId,
+    this.masterName,
     required this.isClosed,
     this.closedByStage,
     this.closedByUserId,
@@ -90,6 +98,9 @@ class ProductionFlowEntry {
       bundleCode:
           json['bundleCode']?.toString() ?? json['bundle_code']?.toString(),
       pieceCode: json['pieceCode']?.toString() ?? json['piece_code']?.toString(),
+      sizeLabel: json['sizeLabel']?.toString() ?? json['size_label']?.toString(),
+      eventStatus:
+          json['eventStatus']?.toString() ?? json['event_status']?.toString(),
       piecesTotal:
           parseInt(json['piecesTotal'] ?? json['pieces_total']),
       userId: parseInt(json['userId'] ?? json['user_id']),
@@ -97,6 +108,9 @@ class ProductionFlowEntry {
           json['userUsername']?.toString() ?? json['user_username']?.toString(),
       userRole: json['userRole']?.toString() ?? json['user_role']?.toString(),
       remark: json['remark']?.toString(),
+      masterId: parseInt(json['masterId'] ?? json['master_id']),
+      masterName:
+          json['masterName']?.toString() ?? json['master_name']?.toString(),
       isClosed: parseBool(json['isClosed'] ?? json['is_closed']),
       closedByStage: json['closedByStage']?.toString() ??
           json['closed_by_stage']?.toString(),

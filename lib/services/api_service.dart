@@ -10,6 +10,7 @@ import '../models/filter_options.dart';
 import '../models/login_response.dart';
 import '../models/master_record.dart';
 import '../models/production_flow_entry.dart';
+import '../models/production_lot_preview.dart';
 
 class ApiException implements Exception {
   final String message;
@@ -403,6 +404,47 @@ class ApiService {
       rethrow;
     } catch (e) {
       debugPrint('submitProductionFlowEntry() unexpected error: $e');
+      throw ApiException('Unexpected error: $e');
+    }
+  }
+
+  Future<ProductionLotPreview> fetchProductionLotPreview(String lotNumber) async {
+    final normalized = lotNumber.trim();
+    if (normalized.isEmpty) {
+      throw ApiException('Lot number is required.');
+    }
+
+    final uri = Uri.parse('$_baseUrl/api/production-flow/lots/$normalized');
+    try {
+      final res = await _client
+          .get(uri, headers: _authorizedHeaders())
+          .timeout(const Duration(seconds: 20));
+
+      final status = res.statusCode;
+      final raw = _safeDecodeUtf8(res.bodyBytes);
+      final Map<String, dynamic>? json = _tryParseJson(raw);
+
+      if (status >= 200 && status < 300 && json != null) {
+        final data = json['data'];
+        if (data is Map<String, dynamic>) {
+          return ProductionLotPreview.fromJson(data);
+        }
+      }
+
+      final msg = _extractMessage(json, raw) ??
+          'Failed to load lot details (status: $status).';
+      debugPrint('fetchProductionLotPreview() error [$status]: $raw');
+      throw ApiException(msg);
+    } on TimeoutException catch (e) {
+      debugPrint('fetchProductionLotPreview() timeout: $e');
+      throw ApiException('Request timed out. Please try again.');
+    } on SocketException catch (e) {
+      debugPrint('fetchProductionLotPreview() network error: $e');
+      throw ApiException('No internet connection.');
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      debugPrint('fetchProductionLotPreview() unexpected error: $e');
       throw ApiException('Unexpected error: $e');
     }
   }
