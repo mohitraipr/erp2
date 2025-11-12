@@ -352,6 +352,8 @@ class ApiService {
     required String code,
     String? remark,
     int? masterId,
+    List<Map<String, dynamic>>? assignments,
+    List<String>? rejectedPieces,
   }) async {
     final uri = Uri.parse('$_baseUrl/api/production-flow/entries');
     try {
@@ -361,6 +363,12 @@ class ApiService {
       }
       if (masterId != null) {
         payload['masterId'] = masterId;
+      }
+      if (assignments != null && assignments.isNotEmpty) {
+        payload['assignments'] = assignments;
+      }
+      if (rejectedPieces != null && rejectedPieces.isNotEmpty) {
+        payload['rejectedPieces'] = rejectedPieces;
       }
 
       final res = await _client
