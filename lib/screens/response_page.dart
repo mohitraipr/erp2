@@ -217,6 +217,7 @@ class _ResponsePageState extends State<ResponsePage> {
 
   final List<SizeEntryData> _sizes = [];
   final List<RollSelection> _selectedRolls = [];
+  int? _lotBulkMasterId;
 
   Map<String, List<FabricRoll>> _rollsByType = {};
   List<ApiLotSummary> _myLots = [];
@@ -414,6 +415,15 @@ class _ResponsePageState extends State<ResponsePage> {
             _selectedMasterId = _masters.first.id;
           }
         }
+        if (_lotBulkMasterId != null &&
+            !_masters.any((master) => master.id == _lotBulkMasterId)) {
+          _lotBulkMasterId = null;
+        }
+        if (_isLotAssignmentStage &&
+            _lotBulkMasterId == null &&
+            _masters.length == 1) {
+          _lotBulkMasterId = _masters.first.id;
+        }
         if (_lotSizeMasters.isNotEmpty) {
           final validIds = _masters.map((master) => master.id).toSet();
           final updated = <int, int?>{};
@@ -568,14 +578,42 @@ class _ResponsePageState extends State<ResponsePage> {
   }
 
   bool get _hasLotAssignmentSelection {
-    if (_lotPreview == null) return false;
-    return _buildLotAssignmentPayload().isNotEmpty;
+    final preview = _lotPreview;
+    if (preview == null) return false;
+    final pendingSizes = preview.sizes
+        .where((size) => size.pendingBundles > 0)
+        .toList(growable: false);
+    if (pendingSizes.isEmpty) {
+      return false;
+    }
+    for (final size in pendingSizes) {
+      final masterId = _lotSizeMasters[size.sizeId];
+      if (masterId == null) {
+        return false;
+      }
+    }
+    return true;
   }
 
   void _clearLotPreviewState() {
     _lotPreview = null;
     _lotPreviewError = null;
     _lotSizeMasters.clear();
+  }
+
+  void _applyMasterToAllPendingMasters() {
+    final masterId = _lotBulkMasterId;
+    final preview = _lotPreview;
+    if (masterId == null || preview == null) {
+      return;
+    }
+    setState(() {
+      for (final size in preview.sizes) {
+        if (size.pendingBundles > 0) {
+          _lotSizeMasters[size.sizeId] = masterId;
+        }
+      }
+    });
   }
 
   Future<void> _submitProductionEntry() async {
@@ -747,8 +785,10 @@ class _ResponsePageState extends State<ResponsePage> {
         _lotPreviewError = null;
         _lotSizeMasters.clear();
         final validMasterIds = _masters.map((m) => m.id).toSet();
-        final defaultMasterId =
-            previousSelections.isEmpty && _masters.length == 1 ? _masters.first.id : null;
+        final defaultMasterId = _lotBulkMasterId ??
+            (previousSelections.isEmpty && _masters.length == 1
+                ? _masters.first.id
+                : null);
         for (final size in preview.sizes) {
           if (size.pendingBundles <= 0) {
             continue;
@@ -1792,6 +1832,68 @@ class _ResponsePageState extends State<ResponsePage> {
       'Closed bundles': preview.closedBundles,
     };
 
+    final pendingSizes =
+        preview.sizes.where((size) => size.pendingBundles > 0).toList();
+    final missingAssignments = pendingSizes
+        .where((size) => _lotSizeMasters[size.sizeId] == null)
+        .length;
+    final canBulkAssign = pendingSizes.isNotEmpty && _masters.isNotEmpty;
+
+    Widget? bulkAssignControls;
+    if (canBulkAssign) {
+      bulkAssignControls = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<int>(
+                  value: _lotBulkMasterId,
+                  decoration: const InputDecoration(
+                    labelText: 'Assign master to all pending sizes',
+                    prefixIcon: Icon(Icons.group_add_outlined),
+                  ),
+                  items: [
+                    for (final master in _masters)
+                      DropdownMenuItem<int>(
+                        value: master.id,
+                        child: Text(master.masterName),
+                      ),
+                  ],
+                  onChanged: _loadingMasters
+                      ? null
+                      : (value) {
+                          if (!mounted) return;
+                          setState(() {
+                            _lotBulkMasterId = value;
+                          });
+                        },
+                ),
+              ),
+              const SizedBox(width: 12),
+              FilledButton.icon(
+                icon: const Icon(Icons.check_circle_outline),
+                label: const Text('Apply to all'),
+                onPressed: (_lotBulkMasterId != null && !_loadingMasters)
+                    ? _applyMasterToAllPendingMasters
+                    : null,
+              ),
+            ],
+          ),
+          if (_lotBulkMasterId == null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                'Choose a master to quickly assign every pending size.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+        ],
+      );
+    }
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -1810,17 +1912,33 @@ class _ResponsePageState extends State<ResponsePage> {
               runSpacing: 8,
               children: _buildDataChips(summary),
             ),
-            const SizedBox(height: 16),
-            if (preview.sizes.isEmpty)
+            if (pendingSizes.isEmpty) ...[
+              const SizedBox(height: 12),
               Text(
-                'No size data found for this lot.',
-                style: theme.textTheme.bodyMedium,
-              )
-            else ...[
+                'All bundles for this lot are already submitted.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ] else ...[
+              const SizedBox(height: 16),
+              if (bulkAssignControls != null) ...[
+                bulkAssignControls,
+                const SizedBox(height: 16),
+              ],
               for (final size in preview.sizes) ...[
                 _buildLotSizeTile(theme, size),
                 const SizedBox(height: 12),
-              ]
+              ],
+              if (missingAssignments > 0) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Assign a master to each pending size to enable submission.',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+              ],
             ],
           ],
         ),
@@ -1951,6 +2069,16 @@ class _ResponsePageState extends State<ResponsePage> {
           if (assignmentControl != null) ...[
             const SizedBox(height: 12),
             assignmentControl,
+            if (selectedMasterId == null && canAssign && _masters.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'Select a master before submitting this lot.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+              ),
           ] else if (!canAssign) ...[
             const SizedBox(height: 12),
             Text(
