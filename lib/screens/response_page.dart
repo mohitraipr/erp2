@@ -4,6 +4,9 @@ import '../models/api_lot.dart';
 import '../models/fabric_roll.dart';
 import '../models/filter_options.dart';
 import '../models/login_response.dart';
+import '../models/master_record.dart';
+import '../models/production_flow_entry.dart';
+import '../models/production_lot_preview.dart';
 import '../services/api_service.dart';
 import '../utils/download_helper.dart';
 import 'login_page.dart';
@@ -152,23 +155,93 @@ const List<String> _allSizeOptions = [
 ];
 
 class _ResponsePageState extends State<ResponsePage> {
+  static const Set<String> _masterCreatorRoles = {
+    'back_pocket',
+    'jeans_assembly',
+    'stitching_master',
+  };
+
+  static const Map<String, String> _productionRoleStage = {
+    'back_pocket': 'back_pocket',
+    'stitching_master': 'stitching_master',
+    'jeans_assembly': 'jeans_assembly',
+    'washing': 'washing',
+    'washing_in': 'washing_in',
+    'finishing': 'finishing',
+  };
+
+  static const Set<String> _stagesRequiringMaster = {
+    'back_pocket',
+    'stitching_master',
+    'jeans_assembly',
+    'finishing',
+  };
+
+  static const Map<String, String> _stageCodeLabels = {
+    'back_pocket': 'Lot number',
+    'stitching_master': 'Lot number',
+    'jeans_assembly': 'Bundle code',
+    'washing': 'Lot number',
+    'washing_in': 'Piece code',
+    'finishing': 'Bundle code',
+  };
+
+  static const Set<String> _bundleStages = {
+    'jeans_assembly',
+    'finishing',
+  };
+
+  static const Set<String> _stagesWithRejections = {
+    'jeans_assembly',
+    'washing_in',
+  };
+
   final GlobalKey<FormState> _lotFormKey = GlobalKey<FormState>();
   final TextEditingController _skuCtrl = TextEditingController();
   final TextEditingController _bundleSizeCtrl = TextEditingController(
-    text: '12',
+    text: '25',
   );
   final TextEditingController _remarkCtrl = TextEditingController();
   final TextEditingController _lotSearchCtrl = TextEditingController();
   final TextEditingController _skuCodeCtrl = TextEditingController();
   TextEditingController? _rollCtrl;
 
+  final GlobalKey<FormState> _masterFormKey = GlobalKey<FormState>();
+  final TextEditingController _masterNameCtrl = TextEditingController();
+  final TextEditingController _masterContactCtrl = TextEditingController();
+  final TextEditingController _masterNotesCtrl = TextEditingController();
+
+  final TextEditingController _productionCodeCtrl = TextEditingController();
+  final TextEditingController _productionRemarkCtrl = TextEditingController();
+  final TextEditingController _rejectedPiecesCtrl = TextEditingController();
+
   final List<SizeEntryData> _sizes = [];
   final List<RollSelection> _selectedRolls = [];
+  int? _lotBulkMasterId;
 
   Map<String, List<FabricRoll>> _rollsByType = {};
   List<ApiLotSummary> _myLots = [];
   List<ApiLotSummary> _filteredLots = [];
   ApiLot? _recentLot;
+
+  List<MasterRecord> _masters = [];
+  bool _loadingMasters = false;
+  bool _creatingMaster = false;
+  String? _mastersError;
+
+  List<ProductionFlowEntry> _productionEntries = [];
+  bool _loadingProductionEntries = false;
+  bool _submittingProduction = false;
+  String? _productionEntriesError;
+  Map<String, dynamic>? _lastProductionResult;
+  Map<String, dynamic>? _bundleDetails;
+  bool _loadingBundleDetails = false;
+  String? _bundleError;
+  int? _selectedMasterId;
+  ProductionLotPreview? _lotPreview;
+  bool _loadingLotPreview = false;
+  String? _lotPreviewError;
+  final Map<int, int?> _lotSizeMasters = {};
 
   List<String> _genders = [];
   List<String> _categories = [];
@@ -185,13 +258,50 @@ class _ResponsePageState extends State<ResponsePage> {
   String? _filtersError;
 
   bool get _isCuttingMaster {
-    final normalizedRole = widget.data.normalizedRole;
+    final normalizedRole = _normalizedRole;
     if (normalizedRole == 'cutting_manager') {
       return true;
     }
 
     final rawRole = widget.data.role.toLowerCase();
     return normalizedRole.contains('cutting') || rawRole.contains('cutting');
+  }
+
+  String get _normalizedRole => widget.data.normalizedRole;
+
+  bool get _canManageMasters => _masterCreatorRoles.contains(_normalizedRole);
+
+  String? get _productionStage => _productionRoleStage[_normalizedRole];
+
+  bool get _isProductionStageUser => _productionStage != null;
+
+  bool get _stageRequiresMaster {
+    final stage = _productionStage;
+    if (stage == null) return false;
+    return _stagesRequiringMaster.contains(stage);
+  }
+
+  String get _productionCodeLabel {
+    final stage = _productionStage;
+    if (stage == null) return 'Code';
+    return _stageCodeLabels[stage] ?? 'Code';
+  }
+
+  bool get _stageRequiresBundle {
+    final stage = _productionStage;
+    if (stage == null) return false;
+    return _bundleStages.contains(stage);
+  }
+
+  bool get _stageAllowsRejections {
+    final stage = _productionStage;
+    if (stage == null) return false;
+    return _stagesWithRejections.contains(stage);
+  }
+
+  bool get _isLotAssignmentStage {
+    final stage = _productionStage;
+    return stage == 'back_pocket' || stage == 'stitching_master';
   }
 
   int get _bundleSize => int.tryParse(_bundleSizeCtrl.text.trim()) ?? 0;
@@ -222,6 +332,12 @@ class _ResponsePageState extends State<ResponsePage> {
     _skuCodeCtrl.addListener(_updateSkuFromParts);
     _addSizeEntry(notify: false);
     _loadFilters();
+    if (_canManageMasters || _stageRequiresMaster) {
+      _loadMasters();
+    }
+    if (_isProductionStageUser) {
+      _loadProductionEntries();
+    }
     if (_isCuttingMaster) {
       _loadRolls();
       _loadMyLots();
@@ -241,6 +357,12 @@ class _ResponsePageState extends State<ResponsePage> {
     _lotSearchCtrl
       ..removeListener(_onSearchFieldChanged)
       ..dispose();
+    _masterNameCtrl.dispose();
+    _masterContactCtrl.dispose();
+    _masterNotesCtrl.dispose();
+    _productionCodeCtrl.dispose();
+    _productionRemarkCtrl.dispose();
+    _rejectedPiecesCtrl.dispose();
     for (final size in _sizes) {
       size.dispose();
     }
@@ -268,6 +390,429 @@ class _ResponsePageState extends State<ResponsePage> {
     } finally {
       if (mounted) {
         setState(() => _loadingRolls = false);
+      }
+    }
+  }
+
+  Future<void> _loadMasters() async {
+    setState(() {
+      _loadingMasters = true;
+      _mastersError = null;
+    });
+    try {
+      final masters = await widget.api.fetchMasters();
+      if (!mounted) return;
+      setState(() {
+        _masters = masters;
+        if (_stageRequiresMaster) {
+          if (_selectedMasterId != null &&
+              !_masters.any((master) => master.id == _selectedMasterId)) {
+            _selectedMasterId = null;
+          }
+          if (!_isLotAssignmentStage &&
+              _selectedMasterId == null &&
+              _masters.isNotEmpty) {
+            _selectedMasterId = _masters.first.id;
+          }
+        }
+        if (_lotBulkMasterId != null &&
+            !_masters.any((master) => master.id == _lotBulkMasterId)) {
+          _lotBulkMasterId = null;
+        }
+        if (_isLotAssignmentStage &&
+            _lotBulkMasterId == null &&
+            _masters.length == 1) {
+          _lotBulkMasterId = _masters.first.id;
+        }
+        if (_lotSizeMasters.isNotEmpty) {
+          final validIds = _masters.map((master) => master.id).toSet();
+          final updated = <int, int?>{};
+          _lotSizeMasters.forEach((sizeId, masterId) {
+            if (masterId != null && !validIds.contains(masterId)) {
+              updated[sizeId] = null;
+            } else {
+              updated[sizeId] = masterId;
+            }
+          });
+          _lotSizeMasters
+            ..clear()
+            ..addAll(updated);
+        }
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _mastersError = e.message);
+    } finally {
+      if (mounted) {
+        setState(() => _loadingMasters = false);
+      }
+    }
+  }
+
+  Future<void> _createMasterRecord() async {
+    if (_creatingMaster) return;
+    final form = _masterFormKey.currentState;
+    if (form == null || !form.validate()) {
+      return;
+    }
+
+    final name = _masterNameCtrl.text.trim();
+    final contact = _masterContactCtrl.text.trim();
+    final notes = _masterNotesCtrl.text.trim();
+
+    setState(() => _creatingMaster = true);
+    try {
+      final master = await widget.api.createMaster(
+        masterName: name,
+        contactNumber: contact.isEmpty ? null : contact,
+        notes: notes.isEmpty ? null : notes,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _masters.insert(0, master);
+        _mastersError = null;
+        if (_stageRequiresMaster) {
+          _selectedMasterId = master.id;
+        }
+      });
+      _masterNameCtrl.clear();
+      _masterContactCtrl.clear();
+      _masterNotesCtrl.clear();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Master ${master.masterName} created.')),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) {
+        setState(() => _creatingMaster = false);
+      }
+    }
+  }
+
+  Future<void> _loadProductionEntries() async {
+    final stage = _productionStage;
+    if (stage == null) return;
+    setState(() {
+      _loadingProductionEntries = true;
+      _productionEntriesError = null;
+    });
+    try {
+      final entries = await widget.api.fetchProductionFlowEntries(
+        stage: stage,
+        limit: 1000,
+      );
+      if (!mounted) return;
+      setState(() {
+        _productionEntries = entries;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _productionEntriesError = e.message);
+    } finally {
+      if (mounted) {
+        setState(() => _loadingProductionEntries = false);
+      }
+    }
+  }
+
+  List<String> _parseRejectedPiecesInput(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) {
+      return const <String>[];
+    }
+
+    final tokens = trimmed
+        .split(RegExp('[\\s,]+'))
+        .map((token) => token.trim().toUpperCase())
+        .where((token) => token.isNotEmpty)
+        .toList();
+
+    if (tokens.isEmpty) {
+      return const <String>[];
+    }
+
+    final seen = <String>{};
+    final result = <String>[];
+    for (final token in tokens) {
+      if (seen.add(token)) {
+        result.add(token);
+      }
+    }
+    return result;
+  }
+
+  List<Map<String, dynamic>> _buildLotAssignmentPayload() {
+    final preview = _lotPreview;
+    if (preview == null) return const [];
+    if (preview.sizes.isEmpty) return const [];
+
+    final sizeById = <int, ProductionLotSize>{
+      for (final size in preview.sizes) size.sizeId: size,
+    };
+
+    final payload = <Map<String, dynamic>>[];
+    _lotSizeMasters.forEach((sizeId, masterId) {
+      final size = sizeById[sizeId];
+      if (size == null) {
+        return;
+      }
+      if (size.pendingBundles <= 0) {
+        return;
+      }
+      if (masterId == null) {
+        return;
+      }
+      payload.add({
+        'sizeId': size.sizeId,
+        'sizeLabel': size.sizeLabel,
+        'masterId': masterId,
+      });
+    });
+
+    return payload;
+  }
+
+  bool get _hasLotAssignmentSelection {
+    final preview = _lotPreview;
+    if (preview == null) return false;
+    final pendingSizes = preview.sizes
+        .where((size) => size.pendingBundles > 0)
+        .toList(growable: false);
+    if (pendingSizes.isEmpty) {
+      return false;
+    }
+    for (final size in pendingSizes) {
+      final masterId = _lotSizeMasters[size.sizeId];
+      if (masterId == null) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void _clearLotPreviewState() {
+    _lotPreview = null;
+    _lotPreviewError = null;
+    _lotSizeMasters.clear();
+  }
+
+  void _applyMasterToAllPendingMasters() {
+    final masterId = _lotBulkMasterId;
+    final preview = _lotPreview;
+    if (masterId == null || preview == null) {
+      return;
+    }
+    setState(() {
+      for (final size in preview.sizes) {
+        if (size.pendingBundles > 0) {
+          _lotSizeMasters[size.sizeId] = masterId;
+        }
+      }
+    });
+  }
+
+  Future<void> _submitProductionEntry() async {
+    if (_submittingProduction) return;
+    final stage = _productionStage;
+    if (stage == null) return;
+
+    final code = _productionCodeCtrl.text.trim().toUpperCase();
+    final remark = _productionRemarkCtrl.text.trim();
+    final rejectedPieces = _stageAllowsRejections
+        ? _parseRejectedPiecesInput(_rejectedPiecesCtrl.text)
+        : const <String>[];
+
+    List<Map<String, dynamic>>? assignments;
+    int? masterId = _selectedMasterId;
+
+    if (_stageRequiresMaster) {
+      if (_isLotAssignmentStage) {
+        if (code.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Enter a lot number before submitting.')),
+          );
+          return;
+        }
+        final preview = _lotPreview;
+        if (preview == null || preview.lotNumber.toUpperCase() != code) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Load the lot details and assign masters before submitting.')),
+          );
+          return;
+        }
+        final payload = _buildLotAssignmentPayload();
+        if (payload.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Select a master for at least one pending size.')),
+          );
+          return;
+        }
+        assignments = payload;
+        masterId = null;
+      } else {
+        if (_selectedMasterId == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Select a master before submitting.')),
+          );
+          return;
+        }
+      }
+    }
+
+    if (code.isEmpty && rejectedPieces.isEmpty) {
+      final label = _productionCodeLabel.toLowerCase();
+      final message = _stageAllowsRejections
+          ? 'Enter a $label or at least one rejected piece code.'
+          : 'Please enter a $label.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+      return;
+    }
+
+    setState(() => _submittingProduction = true);
+    try {
+      final result = await widget.api.submitProductionFlowEntry(
+        code: code,
+        remark: remark.isEmpty ? null : remark,
+        masterId: masterId,
+        assignments: assignments,
+        rejectedPieces: rejectedPieces.isEmpty ? null : rejectedPieces,
+      );
+
+      if (!mounted) return;
+
+      FocusScope.of(context).unfocus();
+
+      setState(() {
+        _lastProductionResult = result;
+        _bundleDetails = null;
+        _bundleError = null;
+        if (_isLotAssignmentStage) {
+          _clearLotPreviewState();
+        }
+      });
+      _productionCodeCtrl.clear();
+      _productionRemarkCtrl.clear();
+      _rejectedPiecesCtrl.clear();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Entry submitted for $stage.')),
+      );
+
+      await _loadProductionEntries();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) {
+        setState(() => _submittingProduction = false);
+      }
+    }
+  }
+
+  Future<void> _lookupBundleDetails() async {
+    if (!_stageRequiresBundle) return;
+    final code = _productionCodeCtrl.text.trim().toUpperCase();
+    if (code.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a bundle code to look up.')),
+      );
+      return;
+    }
+
+    setState(() {
+      _loadingBundleDetails = true;
+      _bundleError = null;
+    });
+    try {
+      final bundle = await widget.api.fetchBundleSummary(code);
+      if (!mounted) return;
+      setState(() {
+        _bundleDetails = bundle;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _bundleError = e.message;
+        _bundleDetails = null;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _loadingBundleDetails = false);
+      }
+    }
+  }
+
+  Future<void> _loadLotPreview({bool refresh = false}) async {
+    if (!_isLotAssignmentStage) {
+      return;
+    }
+
+    final code = _productionCodeCtrl.text.trim().toUpperCase();
+    if (code.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a lot number to continue.')),
+      );
+      return;
+    }
+
+    if (!refresh &&
+        _lotPreview != null &&
+        _lotPreview!.lotNumber.toUpperCase() == code) {
+      return;
+    }
+
+    setState(() {
+      _loadingLotPreview = true;
+      if (!refresh) {
+        _lotPreviewError = null;
+      }
+    });
+
+    try {
+      final preview = await widget.api.fetchProductionLotPreview(code);
+      if (!mounted) return;
+      setState(() {
+        final previousSelections = Map<int, int?>.from(_lotSizeMasters);
+        _lotPreview = preview;
+        _lotPreviewError = null;
+        _lotSizeMasters.clear();
+        final validMasterIds = _masters.map((m) => m.id).toSet();
+        final defaultMasterId = _lotBulkMasterId ??
+            (previousSelections.isEmpty && _masters.length == 1
+                ? _masters.first.id
+                : null);
+        for (final size in preview.sizes) {
+          if (size.pendingBundles <= 0) {
+            continue;
+          }
+          final previous = previousSelections[size.sizeId];
+          if (previous != null && validMasterIds.contains(previous)) {
+            _lotSizeMasters[size.sizeId] = previous;
+          } else if (defaultMasterId != null) {
+            _lotSizeMasters[size.sizeId] = defaultMasterId;
+          } else {
+            _lotSizeMasters[size.sizeId] = null;
+          }
+        }
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _lotPreviewError = e.message;
+        _lotPreview = null;
+        _lotSizeMasters.clear();
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _loadingLotPreview = false);
       }
     }
   }
@@ -619,22 +1164,30 @@ class _ResponsePageState extends State<ResponsePage> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_isCuttingMaster) {
-      return Scaffold(
-        appBar: AppBar(
-          title: const Text('Aurora Workspace'),
-          actions: [
-            IconButton(
-              tooltip: 'Logout',
-              icon: const Icon(Icons.logout),
-              onPressed: _logout,
-            ),
-          ],
-        ),
-        body: _buildWelcomeCard(context),
-      );
+    if (_isCuttingMaster) {
+      return _buildCuttingMasterWorkspace(context);
     }
 
+    if (_isProductionStageUser) {
+      return _buildProductionWorkspace(context);
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Aurora Workspace'),
+        actions: [
+          IconButton(
+            tooltip: 'Logout',
+            icon: const Icon(Icons.logout),
+            onPressed: _logout,
+          ),
+        ],
+      ),
+      body: _buildWelcomeCard(context),
+    );
+  }
+
+  Widget _buildCuttingMasterWorkspace(BuildContext context) {
     return DefaultTabController(
       length: 2,
       child: Scaffold(
@@ -667,6 +1220,1583 @@ class _ResponsePageState extends State<ResponsePage> {
         ),
       ),
     );
+  }
+
+  Widget _buildProductionWorkspace(BuildContext context) {
+    final tabLabels = <String>['Production flow', 'Reports'];
+    final tabViews = <Widget>[
+      _buildProductionFlowTab(context),
+      _buildProductionReportTab(context),
+    ];
+    if (_canManageMasters) {
+      tabLabels.add('Masters');
+      tabViews.add(_buildMastersTab(context));
+    }
+
+    final actions = <Widget>[
+      IconButton(
+        tooltip: 'Reload',
+        icon: const Icon(Icons.refresh),
+        onPressed: () {
+          _loadProductionEntries();
+          if (_isLotAssignmentStage && _lotPreview != null) {
+            _loadLotPreview(refresh: true);
+          }
+          if (_canManageMasters || _stageRequiresMaster) {
+            _loadMasters();
+          }
+        },
+      ),
+      IconButton(
+        tooltip: 'Logout',
+        icon: const Icon(Icons.logout),
+        onPressed: _logout,
+      ),
+    ];
+
+    if (tabLabels.length == 1) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Aurora Production'),
+          actions: actions,
+        ),
+        body: tabViews.first,
+      );
+    }
+
+    return DefaultTabController(
+      length: tabLabels.length,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Aurora Production'),
+          actions: actions,
+          bottom: TabBar(
+            tabs: [for (final label in tabLabels) Tab(text: label)],
+          ),
+        ),
+        body: TabBarView(children: tabViews),
+      ),
+    );
+  }
+
+  Widget _buildProductionFlowTab(BuildContext context) {
+    final stage = _productionStage;
+    if (stage == null) {
+      return const Center(child: Text('No production stage assigned.'));
+    }
+
+    final children = <Widget>[
+      _buildProductionIntroCard(context, stage),
+      const SizedBox(height: 16),
+      _buildProductionFormCard(context, stage),
+    ];
+
+    if (_lastProductionResult != null) {
+      children.addAll([
+        const SizedBox(height: 16),
+        _buildProductionResultCard(context),
+      ]);
+    }
+
+    if (_isLotAssignmentStage) {
+      children.addAll([
+        const SizedBox(height: 16),
+        _buildLotPreviewCard(context),
+      ]);
+    }
+
+    children.add(const SizedBox(height: 32));
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        if (_isLotAssignmentStage && _lotPreview != null) {
+          await _loadLotPreview(refresh: true);
+        }
+        if (_stageRequiresMaster) {
+          await _loadMasters();
+        }
+      },
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        children: children,
+      ),
+    );
+  }
+
+  Widget _buildProductionReportTab(BuildContext context) {
+    if (_loadingProductionEntries && _productionEntries.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_productionEntriesError != null && _productionEntries.isEmpty) {
+      return _ErrorState(
+        message: _productionEntriesError!,
+        onRetry: _loadProductionEntries,
+      );
+    }
+
+    final stage = _productionStage;
+    if (stage == null) {
+      return const Center(child: Text('No production stage assigned.'));
+    }
+
+    final theme = Theme.of(context);
+    final totalEntries = _productionEntries.length;
+    final totalOpen = _productionEntries.where((entry) => !entry.isClosed).length;
+    final totalClosed = totalEntries - totalOpen;
+
+    final summary = <String, dynamic>{
+      'Entries': totalEntries,
+      'Open': totalOpen,
+      'Closed': totalClosed,
+    };
+
+    final List<Widget> groups = [];
+    if (_productionEntries.isEmpty) {
+      groups.add(
+        Text(
+          'No submissions yet for ${_prettyStageName(stage)}.',
+          style: theme.textTheme.bodyMedium,
+        ),
+      );
+    } else if (_stageRequiresMaster) {
+      final grouped = <String, List<ProductionFlowEntry>>{};
+      for (final entry in _productionEntries) {
+        final label = (entry.masterName != null && entry.masterName!.trim().isNotEmpty)
+            ? entry.masterName!.trim()
+            : 'Unassigned';
+        grouped.putIfAbsent(label, () => []).add(entry);
+      }
+
+      final sorted = grouped.entries.toList()
+        ..sort((a, b) => a.key.toLowerCase().compareTo(b.key.toLowerCase()));
+      for (final entry in sorted) {
+        final masterName = entry.key;
+        final items = entry.value;
+        final open = items.where((item) => !item.isClosed).length;
+        final closed = items.length - open;
+        groups.add(
+          ExpansionTile(
+            title: Text(masterName),
+            subtitle: Text('Open: $open • Closed: $closed • Total: ${items.length}'),
+            children: [
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemBuilder: (context, index) =>
+                    _buildProductionEntryTile(context, items[index]),
+                separatorBuilder: (_, __) => const Divider(height: 20),
+                itemCount: items.length,
+              ),
+            ],
+          ),
+        );
+      }
+    } else {
+      final grouped = <String, List<ProductionFlowEntry>>{};
+      for (final entry in _productionEntries) {
+        final label = (entry.lotNumber != null && entry.lotNumber!.trim().isNotEmpty)
+            ? entry.lotNumber!.trim()
+            : 'Lot not set';
+        grouped.putIfAbsent(label, () => []).add(entry);
+      }
+
+      final sorted = grouped.entries.toList()
+        ..sort((a, b) => a.key.toLowerCase().compareTo(b.key.toLowerCase()));
+      for (final entry in sorted) {
+        final lotLabel = entry.key;
+        final items = entry.value;
+        final open = items.where((item) => !item.isClosed).length;
+        final closed = items.length - open;
+        groups.add(
+          ExpansionTile(
+            title: Text(lotLabel),
+            subtitle: Text('Open: $open • Closed: $closed • Total: ${items.length}'),
+            children: [
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemBuilder: (context, index) =>
+                    _buildProductionEntryTile(context, items[index]),
+                separatorBuilder: (_, __) => const Divider(height: 20),
+                itemCount: items.length,
+              ),
+            ],
+          ),
+        );
+      }
+    }
+
+    final summaryCard = Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  '${_prettyStageName(stage)} report',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const Spacer(),
+                TextButton.icon(
+                  icon: const Icon(Icons.download),
+                  label: const Text('Download CSV'),
+                  onPressed:
+                      _productionEntries.isEmpty ? null : _downloadProductionReportCsv,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              children: _buildDataChips(summary),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        await _loadProductionEntries();
+      },
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        children: [
+          summaryCard,
+          const SizedBox(height: 16),
+          ...groups,
+          const SizedBox(height: 16),
+          _buildProductionEntriesCard(context),
+          const SizedBox(height: 32),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProductionIntroCard(BuildContext context, String stage) {
+    final theme = Theme.of(context);
+    final stageName = _prettyStageName(stage);
+    final instruction = _stageInstruction(stage);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              stageName,
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              instruction,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProductionFormCard(BuildContext context, String stage) {
+    final theme = Theme.of(context);
+    final requiresMaster = _stageRequiresMaster;
+    bool canSubmit = !_submittingProduction;
+    if (requiresMaster) {
+      if (_isLotAssignmentStage) {
+        canSubmit = canSubmit &&
+            _masters.isNotEmpty &&
+            _lotPreview != null &&
+            _hasLotAssignmentSelection;
+      } else {
+        canSubmit = canSubmit &&
+            _selectedMasterId != null &&
+            _masters.isNotEmpty;
+      }
+    }
+    final showLotLoader = _isLotAssignmentStage;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Submit ${_productionCodeLabel.toLowerCase()}',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _productionCodeCtrl,
+              textCapitalization: TextCapitalization.characters,
+              decoration: InputDecoration(
+                labelText: _productionCodeLabel,
+                prefixIcon: const Icon(Icons.qr_code_2),
+                helperText: 'Stage: ${_prettyStageName(stage)}',
+              ),
+              onSubmitted: (_) => _submitProductionEntry(),
+            ),
+            if (requiresMaster && !_isLotAssignmentStage) ...[
+              const SizedBox(height: 12),
+              _buildMasterSelectionField(theme),
+            ],
+            if (requiresMaster && _isLotAssignmentStage) ...[
+              const SizedBox(height: 12),
+              Text(
+                'Load the lot to assign masters per size below.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+            if (_stageAllowsRejections) ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: _rejectedPiecesCtrl,
+                textCapitalization: TextCapitalization.characters,
+                minLines: 1,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Rejected piece codes (optional)',
+                  alignLabelWithHint: true,
+                  helperText:
+                      'Separate multiple codes with commas or new lines.',
+                  prefixIcon: Icon(Icons.report_problem_outlined),
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            TextField(
+              controller: _productionRemarkCtrl,
+              maxLines: 2,
+              maxLength: 255,
+              decoration: const InputDecoration(
+                labelText: 'Remark (optional)',
+                alignLabelWithHint: true,
+                prefixIcon: Icon(Icons.sticky_note_2_outlined),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                FilledButton.icon(
+                  icon: _submittingProduction
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.playlist_add_check),
+                  label: Text(
+                    _submittingProduction ? 'Submitting…' : 'Submit entry',
+                  ),
+                  onPressed: canSubmit ? _submitProductionEntry : null,
+                ),
+                if (showLotLoader) ...[
+                  const SizedBox(width: 12),
+                  OutlinedButton.icon(
+                    icon: _loadingLotPreview
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.assignment_ind_outlined),
+                    label: const Text('Load lot details'),
+                    onPressed: _loadingLotPreview ? null : () => _loadLotPreview(),
+                  ),
+                ] else if (_stageRequiresBundle) ...[
+                  const SizedBox(width: 12),
+                  OutlinedButton.icon(
+                    icon: _loadingBundleDetails
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.search),
+                    label: const Text('Lookup bundle'),
+                    onPressed:
+                        _loadingBundleDetails ? null : _lookupBundleDetails,
+                  ),
+                ],
+              ],
+            ),
+            if (_lotPreviewError != null && showLotLoader) ...[
+              const SizedBox(height: 12),
+              Text(
+                _lotPreviewError!,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.error,
+                ),
+              ),
+            ],
+            if (_bundleError != null && _stageRequiresBundle) ...[
+              const SizedBox(height: 12),
+              Text(
+                _bundleError!,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.error,
+                ),
+              ),
+            ],
+            if (_bundleDetails != null && _stageRequiresBundle) ...[
+              const SizedBox(height: 12),
+              _buildBundleSummary(theme, _bundleDetails!),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMasterSelectionField(ThemeData theme) {
+    if (_loadingMasters && _masters.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final List<Widget> errorWidgets = [];
+    if (_mastersError != null) {
+      errorWidgets.addAll([
+        Text(
+          _mastersError!,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.error,
+          ),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          icon: const Icon(Icons.refresh),
+          label: const Text('Retry'),
+          onPressed: _loadMasters,
+        ),
+      ]);
+    }
+
+    if (_masters.isEmpty) {
+      if (errorWidgets.isNotEmpty) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: errorWidgets,
+        );
+      }
+      final text = _canManageMasters
+          ? 'Create a master from the Masters tab before submitting.'
+          : 'No masters found. Contact your supervisor to set up masters for your account.';
+      return Text(
+        text,
+        style: theme.textTheme.bodyMedium?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+        ),
+      );
+    }
+
+    final dropdown = DropdownButtonFormField<int>(
+      value: _selectedMasterId,
+      items: [
+        for (final master in _masters)
+          DropdownMenuItem<int>(
+            value: master.id,
+            child: Text(master.masterName),
+          ),
+      ],
+      decoration: const InputDecoration(
+        labelText: 'Select master',
+        prefixIcon: Icon(Icons.badge_outlined),
+      ),
+      onChanged: _loadingMasters
+          ? null
+          : (value) {
+              if (!mounted) return;
+              setState(() => _selectedMasterId = value);
+            },
+    );
+
+    if (errorWidgets.isNotEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ...errorWidgets,
+          const SizedBox(height: 12),
+          dropdown,
+        ],
+      );
+    }
+
+    return dropdown;
+  }
+
+  Widget _buildBundleSummary(ThemeData theme, Map<String, dynamic> bundle) {
+    final details = <String, dynamic>{
+      'Lot number': bundle['lotNumber'] ?? bundle['lot_number'],
+      'Bundle code': bundle['bundleCode'] ?? bundle['bundle_code'],
+      'Pieces in bundle': bundle['piecesInBundle'] ?? bundle['pieces_in_bundle'],
+      'Piece records': bundle['pieceCount'] ?? bundle['piece_count'],
+      'Fabric': bundle['fabricType'] ?? bundle['fabric_type'],
+      'SKU': bundle['sku'],
+    };
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Bundle details',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            children: _buildDataChips(details),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLotPreviewCard(BuildContext context) {
+    final theme = Theme.of(context);
+    if (_loadingLotPreview && _lotPreview == null) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: const [
+              SizedBox(height: 12),
+              CircularProgressIndicator(),
+              SizedBox(height: 12),
+              Text('Loading lot details…'),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final preview = _lotPreview;
+    if (preview == null) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Lot assignment overview',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Enter a lot number and choose “Load lot details” to review sizes and assign masters.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final summary = <String, dynamic>{
+      'Lot number': preview.lotNumber,
+      if (preview.totalPieces != null) 'Total pieces': preview.totalPieces,
+      'Total bundles': preview.totalBundles,
+      'Assigned bundles': preview.assignedBundles,
+      'Open bundles': preview.openBundles,
+      'Closed bundles': preview.closedBundles,
+    };
+
+    final pendingSizes =
+        preview.sizes.where((size) => size.pendingBundles > 0).toList();
+    final missingAssignments = pendingSizes
+        .where((size) => _lotSizeMasters[size.sizeId] == null)
+        .length;
+    final canBulkAssign = pendingSizes.isNotEmpty && _masters.isNotEmpty;
+
+    Widget? bulkAssignControls;
+    if (canBulkAssign) {
+      bulkAssignControls = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<int>(
+                  value: _lotBulkMasterId,
+                  decoration: const InputDecoration(
+                    labelText: 'Assign master to all pending sizes',
+                    prefixIcon: Icon(Icons.group_add_outlined),
+                  ),
+                  items: [
+                    for (final master in _masters)
+                      DropdownMenuItem<int>(
+                        value: master.id,
+                        child: Text(master.masterName),
+                      ),
+                  ],
+                  onChanged: _loadingMasters
+                      ? null
+                      : (value) {
+                          if (!mounted) return;
+                          setState(() {
+                            _lotBulkMasterId = value;
+                          });
+                        },
+                ),
+              ),
+              const SizedBox(width: 12),
+              FilledButton.icon(
+                icon: const Icon(Icons.check_circle_outline),
+                label: const Text('Apply to all'),
+                onPressed: (_lotBulkMasterId != null && !_loadingMasters)
+                    ? _applyMasterToAllPendingMasters
+                    : null,
+              ),
+            ],
+          ),
+          if (_lotBulkMasterId == null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                'Choose a master to quickly assign every pending size.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+        ],
+      );
+    }
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Lot assignment overview',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              children: _buildDataChips(summary),
+            ),
+            if (pendingSizes.isEmpty) ...[
+              const SizedBox(height: 12),
+              Text(
+                'All bundles for this lot are already submitted.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ] else ...[
+              const SizedBox(height: 16),
+              if (bulkAssignControls != null) ...[
+                bulkAssignControls,
+                const SizedBox(height: 16),
+              ],
+              for (final size in preview.sizes) ...[
+                _buildLotSizeTile(theme, size),
+                const SizedBox(height: 12),
+              ],
+              if (missingAssignments > 0) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Assign a master to each pending size to enable submission.',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+              ],
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLotSizeTile(ThemeData theme, ProductionLotSize size) {
+    final canAssign = size.pendingBundles > 0;
+    final selectedMasterId = _lotSizeMasters[size.sizeId];
+    final assignedNames = <String>{};
+    for (final bundle in size.bundles) {
+      if (!bundle.assigned) continue;
+      final master = bundle.masterName?.trim();
+      if (master != null && master.isNotEmpty) {
+        assignedNames.add(master);
+      }
+    }
+
+    final chips = <String, dynamic>{
+      if (size.patternCount != null) 'Patterns': size.patternCount,
+      'Bundles': size.totalBundles,
+      'Pending': size.pendingBundles,
+      'Assigned': size.assignedBundles,
+      'Open': size.openBundles,
+      'Closed': size.closedBundles,
+      if (size.totalPieces != null) 'Pieces': size.totalPieces,
+    };
+
+    Widget? assignmentControl;
+    if (canAssign) {
+      if (_masters.isEmpty && !_loadingMasters) {
+        assignmentControl = Text(
+          'No masters available. Create or refresh the master list first.',
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.error,
+          ),
+        );
+      } else {
+        assignmentControl = Row(
+          children: [
+            Expanded(
+              child: DropdownButtonFormField<int>(
+                value: selectedMasterId,
+                items: [
+                  for (final master in _masters)
+                    DropdownMenuItem<int>(
+                      value: master.id,
+                      child: Text(master.masterName),
+                    ),
+                ],
+                decoration: const InputDecoration(
+                  labelText: 'Assign master',
+                  prefixIcon: Icon(Icons.badge_outlined),
+                ),
+                onChanged: _loadingMasters
+                    ? null
+                    : (value) {
+                        if (!mounted) return;
+                        setState(() {
+                          _lotSizeMasters[size.sizeId] = value;
+                        });
+                      },
+              ),
+            ),
+            if (selectedMasterId != null) ...[
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: () {
+                  if (!mounted) return;
+                  setState(() {
+                    _lotSizeMasters[size.sizeId] = null;
+                  });
+                },
+                child: const Text('Clear'),
+              ),
+            ],
+          ],
+        );
+      }
+    }
+
+    final assignedSummary = size.assignedBundles == 0
+        ? 'Not yet assigned.'
+        : 'Assigned bundles: ${size.assignedBundles} '
+            '(${size.openBundles} open, ${size.closedBundles} closed)';
+
+    final masterSummary = assignedNames.isEmpty
+        ? null
+        : 'Masters: ${assignedNames.join(', ')}';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceVariant.withOpacity(0.3),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Size ${size.sizeLabel.isEmpty ? '—' : size.sizeLabel}',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            children: _buildDataChips(chips),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            assignedSummary,
+            style: theme.textTheme.bodyMedium,
+          ),
+          if (masterSummary != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              masterSummary,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+          if (assignmentControl != null) ...[
+            const SizedBox(height: 12),
+            assignmentControl,
+            if (selectedMasterId == null && canAssign && _masters.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'Select a master before submitting this lot.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+              ),
+          ] else if (!canAssign) ...[
+            const SizedBox(height: 12),
+            Text(
+              'All bundles for this size have been submitted.',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProductionResultCard(BuildContext context) {
+    final result = _lastProductionResult;
+    if (result == null) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    final stageLabel = _prettyStageName(
+      (result['stage'] ?? _productionStage ?? '').toString(),
+    );
+    final message = result['message']?.toString();
+    final bool success = result['success'] == true ||
+        (result['status'] == 200 || result['status'] == 201);
+    Map<String, dynamic>? data;
+    if (result['data'] is Map) {
+      data = Map<String, dynamic>.from(result['data'] as Map);
+    }
+
+    return Card(
+      color: theme.colorScheme.secondaryContainer.withOpacity(0.4),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  'Latest submission',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: theme.colorScheme.onSecondaryContainer,
+                  ),
+                ),
+                const Spacer(),
+                Chip(
+                  label: Text(success ? 'Success' : 'Completed'),
+                  backgroundColor:
+                      theme.colorScheme.onSecondaryContainer.withOpacity(0.08),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Stage: $stageLabel',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSecondaryContainer,
+              ),
+            ),
+            if (message != null && message.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                message,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSecondaryContainer,
+                ),
+              ),
+            ],
+            if (data != null && data.isNotEmpty)
+              ...[const SizedBox(height: 12), ..._buildResultDetailWidgets(theme, data)],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProductionEntriesCard(BuildContext context) {
+    if (_loadingProductionEntries && _productionEntries.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_productionEntriesError != null && _productionEntries.isEmpty) {
+      return _ErrorState(
+        message: _productionEntriesError!,
+        onRetry: _loadProductionEntries,
+      );
+    }
+
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Recent entries',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            if (_loadingProductionEntries && _productionEntries.isNotEmpty)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: LinearProgressIndicator(minHeight: 2),
+              ),
+            if (_productionEntries.isEmpty)
+              Text(
+                'No submissions yet for ${_productionStage != null && _productionStage!.isNotEmpty ? _prettyStageName(_productionStage!) : 'this stage'}.',
+                style: theme.textTheme.bodyMedium,
+              )
+            else
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemBuilder: (context, index) {
+                  final entry = _productionEntries[index];
+                  return _buildProductionEntryTile(context, entry);
+                },
+                separatorBuilder: (_, __) => const Divider(height: 20),
+                itemCount: _productionEntries.length,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProductionEntryTile(
+    BuildContext context,
+    ProductionFlowEntry entry,
+  ) {
+    final theme = Theme.of(context);
+    final detailParts = <String>[];
+    if (entry.lotNumber != null && entry.lotNumber!.isNotEmpty) {
+      detailParts.add('Lot ${entry.lotNumber}');
+    }
+    if (entry.sizeLabel != null && entry.sizeLabel!.isNotEmpty) {
+      detailParts.add('Size ${entry.sizeLabel}');
+    }
+    if (entry.bundleCode != null && entry.bundleCode!.isNotEmpty) {
+      detailParts.add('Bundle ${entry.bundleCode}');
+    }
+    if (entry.pieceCode != null && entry.pieceCode!.isNotEmpty) {
+      detailParts.add('Piece ${entry.pieceCode}');
+    }
+    final detailText = detailParts.join(' • ');
+
+    final userParts = <String>[];
+    if (entry.userUsername != null && entry.userUsername!.isNotEmpty) {
+      userParts.add(entry.userUsername!);
+    }
+    if (entry.userRole != null && entry.userRole!.isNotEmpty) {
+      userParts.add(entry.userRole!);
+    }
+    final userText = userParts.isEmpty ? 'Unknown user' : userParts.join(' • ');
+    final timestamp = _formatDateTime(entry.createdAt);
+    final remark = entry.remark?.trim();
+
+    final statusChip = Chip(
+      label: Text(entry.isClosed ? 'Closed' : 'Open'),
+      backgroundColor: entry.isClosed
+          ? theme.colorScheme.primary.withOpacity(0.12)
+          : theme.colorScheme.secondaryContainer.withOpacity(0.6),
+    );
+
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: CircleAvatar(
+        backgroundColor: theme.colorScheme.primary.withOpacity(0.15),
+        child: Text(
+          entry.stage.isNotEmpty ? entry.stage[0].toUpperCase() : '?',
+          style: theme.textTheme.titleMedium,
+        ),
+      ),
+      title: Text(
+        entry.codeValue,
+        style: theme.textTheme.titleMedium,
+      ),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (detailText.isNotEmpty)
+            Text(
+              detailText,
+              style: theme.textTheme.bodyMedium,
+            ),
+          Text(
+            '$userText • $timestamp',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          if (remark != null && remark.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                'Note: $remark',
+                style: theme.textTheme.bodySmall,
+              ),
+            ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              statusChip,
+              if (entry.piecesTotal != null)
+                Chip(label: Text('${entry.piecesTotal} pcs')),
+            ],
+          ),
+        ],
+      ),
+      trailing: entry.createdAt != null
+          ? Text(
+              _formatTime(entry.createdAt!),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            )
+          : null,
+    );
+  }
+
+  Future<void> _downloadProductionReportCsv() async {
+    if (_productionEntries.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No data available to download.')),
+      );
+      return;
+    }
+
+    final stage = _productionStage ?? 'stage';
+    final buffer = StringBuffer();
+    buffer.writeln(
+        'Group,Code,Lot,Size,Bundle,Piece,Status,Closed,Master,Created At,Closed At,User');
+
+    for (final entry in _productionEntries) {
+      final group = _stageRequiresMaster
+          ? (entry.masterName?.trim().isNotEmpty == true
+              ? entry.masterName!.trim()
+              : 'Unassigned')
+          : (entry.lotNumber?.trim().isNotEmpty == true
+              ? entry.lotNumber!.trim()
+              : 'Lot not set');
+      final row = [
+        group,
+        entry.codeValue,
+        entry.lotNumber ?? '',
+        entry.sizeLabel ?? '',
+        entry.bundleCode ?? '',
+        entry.pieceCode ?? '',
+        entry.eventStatus ?? (entry.isClosed ? 'closed' : 'open'),
+        entry.isClosed ? 'Yes' : 'No',
+        entry.masterName ?? '',
+        entry.createdAt != null ? _formatDateTime(entry.createdAt!) : '',
+        entry.closedAt != null ? _formatDateTime(entry.closedAt!) : '',
+        entry.userUsername ?? '',
+      ].map(_csvEscape).join(',');
+      buffer.writeln(row);
+    }
+
+    final filename =
+        'production-${stage.replaceAll(' ', '-').toLowerCase()}-${DateTime.now().millisecondsSinceEpoch}.csv';
+    final saved = await saveCsvToDevice(filename, buffer.toString());
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(saved
+            ? 'Report downloaded as $filename.'
+            : 'CSV ready. Copy from clipboard if automatic download is unavailable.'),
+      ),
+    );
+  }
+
+  String _csvEscape(String value) {
+    if (value.contains(',') || value.contains('"') || value.contains('\n')) {
+      final escaped = value.replaceAll('"', '""');
+      return '"$escaped"';
+    }
+    return value;
+  }
+
+  Widget _buildMastersTab(BuildContext context) {
+    Widget listSection;
+    if (_loadingMasters && _masters.isEmpty) {
+      listSection = const Center(child: CircularProgressIndicator());
+    } else if (_mastersError != null && _masters.isEmpty) {
+      listSection = _ErrorState(
+        message: _mastersError!,
+        onRetry: _loadMasters,
+      );
+    } else {
+      listSection = _buildMastersListCard(context);
+    }
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        await _loadMasters();
+      },
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        children: [
+          _buildMastersFormCard(context),
+          const SizedBox(height: 16),
+          listSection,
+          const SizedBox(height: 32),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMastersFormCard(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Form(
+          key: _masterFormKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Create master',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _masterNameCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Master name',
+                  prefixIcon: Icon(Icons.person_outline),
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Enter master name';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _masterContactCtrl,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(
+                  labelText: 'Contact number',
+                  prefixIcon: Icon(Icons.phone_outlined),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _masterNotesCtrl,
+                maxLines: 2,
+                maxLength: 255,
+                decoration: const InputDecoration(
+                  labelText: 'Notes',
+                  alignLabelWithHint: true,
+                  prefixIcon: Icon(Icons.note_alt_outlined),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton.icon(
+                  icon: _creatingMaster
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.save_alt),
+                  label: Text(
+                    _creatingMaster ? 'Saving…' : 'Save master',
+                  ),
+                  onPressed: _creatingMaster ? null : _createMasterRecord,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMastersListCard(BuildContext context) {
+    final theme = Theme.of(context);
+    if (_masters.isEmpty) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Text(
+            'No masters created yet. Use the form above to add your first master.',
+            style: theme.textTheme.bodyMedium,
+          ),
+        ),
+      );
+    }
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Your masters',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 12),
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemBuilder: (context, index) {
+                final master = _masters[index];
+                final roleLabel = master.creatorRole != null
+                    ? _prettyStageName(master.creatorRole!.toLowerCase())
+                    : null;
+                final createdLabel = _formatDateTime(master.createdAt);
+
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const CircleAvatar(child: Icon(Icons.person)),
+                  title: Text(
+                    master.masterName,
+                    style: theme.textTheme.titleMedium,
+                  ),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (master.contactNumber != null &&
+                          master.contactNumber!.isNotEmpty)
+                        Text(master.contactNumber!),
+                      if (master.notes != null && master.notes!.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(master.notes!),
+                        ),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          'Created $createdLabel',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  trailing: roleLabel != null && roleLabel.isNotEmpty
+                      ? Chip(label: Text(roleLabel))
+                      : null,
+                );
+              },
+              separatorBuilder: (_, __) => const Divider(height: 24),
+              itemCount: _masters.length,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _prettyStageName(String stage) {
+    if (stage.isEmpty) return '';
+    final parts = stage.split(RegExp(r'[_\s]+')).where((part) => part.isNotEmpty);
+    return parts
+        .map((part) => part.substring(0, 1).toUpperCase() + part.substring(1))
+        .join(' ');
+  }
+
+  String _stageInstruction(String stage) {
+    switch (stage) {
+      case 'back_pocket':
+        return 'Enter the lot number once all sizes are ready so every bundle moves to back pocket.';
+      case 'stitching_master':
+        return 'Submit the lot number after stitching is complete to release every bundle to the next stage.';
+      case 'jeans_assembly':
+        return 'Submit the bundle code after both back pocket and stitching teams finish, or log any rejected piece codes.';
+      case 'washing':
+        return 'Enter the lot number to register all pieces leaving jeans assembly for washing.';
+      case 'washing_in':
+        return 'Scan the piece code when it returns from washing, or record rejects that cannot continue.';
+      case 'finishing':
+        return 'Submit the bundle code after confirming every piece has passed washing in.';
+      default:
+        return 'Submit the production code assigned to your station to update the flow.';
+    }
+  }
+
+  List<Widget> _buildResultDetailWidgets(
+    ThemeData theme,
+    Map<String, dynamic> data,
+  ) {
+    final remaining = <String, dynamic>{};
+    data.forEach((key, value) {
+      if (value != null) {
+        remaining[key.toString()] = value;
+      }
+    });
+
+    dynamic assignments = remaining.remove('assignments');
+    assignments ??= remaining.remove('sizeAssignments');
+    assignments ??= remaining.remove('assignmentSummary');
+    if (assignments is Map) {
+      assignments = assignments.values;
+    }
+
+    dynamic rejected = remaining.remove('rejectedPieces');
+    rejected ??= remaining.remove('rejected_piece_codes');
+    rejected ??= remaining.remove('rejectPieces');
+    if (rejected is Map) {
+      rejected = rejected.values;
+    }
+
+    final widgets = <Widget>[];
+
+    if (remaining.isNotEmpty) {
+      widgets.add(
+        Wrap(
+          spacing: 12,
+          runSpacing: 8,
+          children: _buildDataChips(remaining),
+        ),
+      );
+    }
+
+    final assignmentLabels = <String>[];
+    if (assignments is Iterable) {
+      for (final item in assignments) {
+        if (item is Map) {
+          final map = Map<String, dynamic>.from(item as Map);
+          final sizeLabel =
+              (map['sizeLabel'] ?? map['size_label'] ?? '').toString().trim();
+          final sizeId = map['sizeId'] ?? map['size_id'];
+          final bundlesRaw = map['bundles'] ??
+              map['bundleCount'] ??
+              map['bundle_count'];
+          final masterName =
+              (map['masterName'] ?? map['master_name'] ?? '').toString().trim();
+
+          final parts = <String>[];
+          if (sizeLabel.isNotEmpty) {
+            parts.add(sizeLabel);
+          } else if (sizeId != null) {
+            parts.add('Size $sizeId');
+          }
+
+          if (bundlesRaw != null) {
+            final bundleText = bundlesRaw.toString();
+            if (bundleText.isNotEmpty) {
+              final parsed = int.tryParse(bundleText);
+              final bundleLabel = parsed == 1
+                  ? '1 bundle'
+                  : '$bundleText bundles';
+              parts.add(bundleLabel);
+            }
+          }
+
+          if (masterName.isNotEmpty) {
+            parts.add('Master $masterName');
+          }
+
+          if (parts.isNotEmpty) {
+            assignmentLabels.add(parts.join(' • '));
+          }
+        } else if (item != null) {
+          final value = item.toString().trim();
+          if (value.isNotEmpty) {
+            assignmentLabels.add(value);
+          }
+        }
+      }
+    }
+
+    if (assignmentLabels.isNotEmpty) {
+      if (widgets.isNotEmpty) {
+        widgets.add(const SizedBox(height: 12));
+      }
+      widgets.add(
+        Text(
+          'Assignments',
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      );
+      widgets.add(const SizedBox(height: 8));
+      widgets.add(
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            for (final label in assignmentLabels) Chip(label: Text(label)),
+          ],
+        ),
+      );
+    }
+
+    final rejectedLabels = <String>[];
+    if (rejected is Iterable) {
+      final seen = <String>{};
+      for (final item in rejected) {
+        if (item == null) continue;
+        final value = item.toString().trim();
+        if (value.isEmpty) continue;
+        final normalized = value.toUpperCase();
+        if (seen.add(normalized)) {
+          rejectedLabels.add(normalized);
+        }
+      }
+    }
+
+    if (rejectedLabels.isNotEmpty) {
+      if (widgets.isNotEmpty) {
+        widgets.add(const SizedBox(height: 12));
+      }
+      widgets.add(
+        Text(
+          'Rejected pieces',
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      );
+      widgets.add(const SizedBox(height: 8));
+      widgets.add(
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            for (final code in rejectedLabels) Chip(label: Text(code)),
+          ],
+        ),
+      );
+    }
+
+    if (widgets.isEmpty) {
+      widgets.add(
+        Wrap(
+          spacing: 12,
+          runSpacing: 8,
+          children: _buildDataChips(data),
+        ),
+      );
+    }
+
+    return widgets;
+  }
+
+  List<Widget> _buildDataChips(Map<String, dynamic> data) {
+    final chips = <Widget>[];
+    data.forEach((key, value) {
+      if (value == null) return;
+      final formatted = _formatDataValue(value);
+      if (formatted.isEmpty) return;
+      chips.add(Chip(label: Text('${_humanizeKey(key)}: $formatted')));
+    });
+    if (chips.isEmpty) {
+      chips.add(const Chip(label: Text('No details provided')));
+    }
+    return chips;
+  }
+
+  String _formatDataValue(dynamic value) {
+    if (value is bool) return value ? 'Yes' : 'No';
+    if (value is num) {
+      if (value is double && value.toStringAsFixed(1).endsWith('.0')) {
+        return value.toStringAsFixed(0);
+      }
+      return value.toString();
+    }
+    return value.toString();
+  }
+
+  String _humanizeKey(String key) {
+    if (key.isEmpty) return '';
+    final parts = key.split(RegExp(r'[_\s]+')).where((part) => part.isNotEmpty);
+    return parts
+        .map((part) => part.substring(0, 1).toUpperCase() + part.substring(1))
+        .join(' ');
+  }
+
+  String _formatDateTime(DateTime? value) {
+    if (value == null) return '—';
+    final local = value.toLocal();
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    final day = local.day.toString().padLeft(2, '0');
+    final month = months[local.month - 1];
+    final year = local.year;
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '$day $month $year • $hour:$minute';
+  }
+
+  String _formatTime(DateTime value) {
+    final local = value.toLocal();
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
   }
 
   Widget _buildWelcomeCard(BuildContext context) {
@@ -1048,8 +3178,8 @@ class _ResponsePageState extends State<ResponsePage> {
     final totalLots = _myLots.length;
     final statusText = hasQuery
         ? (results == 0
-            ? 'No lots match "$query".'
-            : '$results result${results == 1 ? '' : 's'} match "$query".')
+              ? 'No lots match "$query".'
+              : '$results result${results == 1 ? '' : 's'} match "$query".')
         : 'Viewing $totalLots lot${totalLots == 1 ? '' : 's'}.';
 
     return Card(
@@ -1309,10 +3439,8 @@ class _LotInfoCardState extends State<_LotInfoCard> {
               value: genderValue,
               items: widget.genders
                   .map(
-                    (gender) => DropdownMenuItem(
-                      value: gender,
-                      child: Text(gender),
-                    ),
+                    (gender) =>
+                        DropdownMenuItem(value: gender, child: Text(gender)),
                   )
                   .toList(),
               onChanged: filtersReady ? widget.onGenderChanged : null,
@@ -1907,10 +4035,7 @@ class _InlineInfoBanner extends StatelessWidget {
               ),
             ),
           ),
-          TextButton(
-            onPressed: () => onRetry(),
-            child: const Text('Retry'),
-          ),
+          TextButton(onPressed: () => onRetry(), child: const Text('Retry')),
         ],
       ),
     );
@@ -1934,11 +4059,17 @@ class _EmptyLotsState extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Icon(Icons.inbox_outlined, size: 40, color: theme.colorScheme.primary),
+            Icon(
+              Icons.inbox_outlined,
+              size: 40,
+              color: theme.colorScheme.primary,
+            ),
             const SizedBox(height: 16),
             Text(
               hasQuery ? 'No matching lots' : 'No lots yet',
-              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const SizedBox(height: 8),
             Text(

@@ -8,6 +8,9 @@ import '../models/api_lot.dart';
 import '../models/fabric_roll.dart';
 import '../models/filter_options.dart';
 import '../models/login_response.dart';
+import '../models/master_record.dart';
+import '../models/production_flow_entry.dart';
+import '../models/production_lot_preview.dart';
 
 class ApiException implements Exception {
   final String message;
@@ -187,6 +190,108 @@ class ApiService {
     }
   }
 
+  Future<List<MasterRecord>> fetchMasters() async {
+    final uri = Uri.parse('$_baseUrl/api/masters');
+    try {
+      final res = await _client
+          .get(uri, headers: _authorizedHeaders())
+          .timeout(const Duration(seconds: 20));
+
+      final status = res.statusCode;
+      final raw = _safeDecodeUtf8(res.bodyBytes);
+      final decoded = _tryDecodeJson(raw);
+
+      if (status >= 200 && status < 300) {
+        if (decoded is List) {
+          return decoded
+              .whereType<Map>()
+              .map((e) => MasterRecord.fromJson(
+                    Map<String, dynamic>.from(e as Map),
+                  ))
+              .toList();
+        }
+
+        if (decoded is Iterable) {
+          return decoded
+              .whereType<Map>()
+              .map((e) => MasterRecord.fromJson(
+                    Map<String, dynamic>.from(e as Map),
+                  ))
+              .toList();
+        }
+      }
+
+      final msg =
+          _extractMessage(decoded, raw) ?? 'Failed to fetch masters (status: $status).';
+      debugPrint('fetchMasters() error [$status]: $raw');
+      throw ApiException(msg);
+    } on TimeoutException catch (e) {
+      debugPrint('fetchMasters() timeout: $e');
+      throw ApiException('Request timed out. Check your connection.');
+    } on SocketException catch (e) {
+      debugPrint('fetchMasters() network error: $e');
+      throw ApiException('No internet connection.');
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      debugPrint('fetchMasters() unexpected error: $e');
+      throw ApiException('Unexpected error: $e');
+    }
+  }
+
+  Future<MasterRecord> createMaster({
+    required String masterName,
+    String? contactNumber,
+    String? notes,
+  }) async {
+    final uri = Uri.parse('$_baseUrl/api/masters');
+    try {
+      final payload = <String, dynamic>{
+        'masterName': masterName,
+        if (contactNumber != null && contactNumber.trim().isNotEmpty)
+          'contactNumber': contactNumber.trim(),
+        if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+      };
+
+      final res = await _client
+          .post(
+            uri,
+            headers: _authorizedHeaders(
+              base: const {'Content-Type': 'application/json'},
+            ),
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 20));
+
+      final status = res.statusCode;
+      final raw = _safeDecodeUtf8(res.bodyBytes);
+      final Map<String, dynamic>? json = _tryParseJson(raw);
+
+      if (status >= 200 && status < 300 && json != null) {
+        final masterJson = json['master'];
+        if (masterJson is Map<String, dynamic>) {
+          return MasterRecord.fromJson(masterJson);
+        }
+      }
+
+      final msg =
+          _extractMessage(json, raw) ?? 'Failed to create master (status: $status).';
+      debugPrint('createMaster() error [$status]: $raw');
+      throw ApiException(msg);
+    } on TimeoutException catch (e) {
+      debugPrint('createMaster() timeout: $e');
+      throw ApiException('Request timed out. Check your connection.');
+    } on SocketException catch (e) {
+      debugPrint('createMaster() network error: $e');
+      throw ApiException('No internet connection.');
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      debugPrint('createMaster() unexpected error: $e');
+      throw ApiException('Unexpected error: $e');
+    }
+  }
+
   Future<ApiLot> createLot({
     required String sku,
     required String fabricType,
@@ -240,6 +345,202 @@ class ApiService {
       rethrow;
     } catch (e) {
       debugPrint('createLot() unexpected error: $e');
+      throw ApiException('Unexpected error: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> submitProductionFlowEntry({
+    required String code,
+    String? remark,
+    int? masterId,
+    List<Map<String, dynamic>>? assignments,
+    List<String>? rejectedPieces,
+  }) async {
+    final uri = Uri.parse('$_baseUrl/api/production-flow/entries');
+    try {
+      final payload = <String, dynamic>{'code': code};
+      if (remark != null && remark.trim().isNotEmpty) {
+        payload['remark'] = remark.trim();
+      }
+      if (masterId != null) {
+        payload['masterId'] = masterId;
+      }
+      if (assignments != null && assignments.isNotEmpty) {
+        payload['assignments'] = assignments;
+      }
+      if (rejectedPieces != null && rejectedPieces.isNotEmpty) {
+        payload['rejectedPieces'] = rejectedPieces;
+      }
+
+      final res = await _client
+          .post(
+            uri,
+            headers: _authorizedHeaders(
+              base: const {'Content-Type': 'application/json'},
+            ),
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 25));
+
+      final status = res.statusCode;
+      final raw = _safeDecodeUtf8(res.bodyBytes);
+      final Map<String, dynamic>? json = _tryParseJson(raw);
+
+      if (status >= 200 && status < 300 && json != null) {
+        return json;
+      }
+
+      final msg = _extractMessage(json, raw) ??
+          'Failed to submit production entry (status: $status).';
+      debugPrint('submitProductionFlowEntry() error [$status]: $raw');
+      throw ApiException(msg);
+    } on TimeoutException catch (e) {
+      debugPrint('submitProductionFlowEntry() timeout: $e');
+      throw ApiException('Request timed out. Please try again.');
+    } on SocketException catch (e) {
+      debugPrint('submitProductionFlowEntry() network error: $e');
+      throw ApiException('No internet connection.');
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      debugPrint('submitProductionFlowEntry() unexpected error: $e');
+      throw ApiException('Unexpected error: $e');
+    }
+  }
+
+  Future<ProductionLotPreview> fetchProductionLotPreview(String lotNumber) async {
+    final normalized = lotNumber.trim();
+    if (normalized.isEmpty) {
+      throw ApiException('Lot number is required.');
+    }
+
+    final uri = Uri.parse('$_baseUrl/api/production-flow/lots/$normalized');
+    try {
+      final res = await _client
+          .get(uri, headers: _authorizedHeaders())
+          .timeout(const Duration(seconds: 20));
+
+      final status = res.statusCode;
+      final raw = _safeDecodeUtf8(res.bodyBytes);
+      final Map<String, dynamic>? json = _tryParseJson(raw);
+
+      if (status >= 200 && status < 300 && json != null) {
+        final data = json['data'];
+        if (data is Map<String, dynamic>) {
+          return ProductionLotPreview.fromJson(data);
+        }
+      }
+
+      final msg = _extractMessage(json, raw) ??
+          'Failed to load lot details (status: $status).';
+      debugPrint('fetchProductionLotPreview() error [$status]: $raw');
+      throw ApiException(msg);
+    } on TimeoutException catch (e) {
+      debugPrint('fetchProductionLotPreview() timeout: $e');
+      throw ApiException('Request timed out. Please try again.');
+    } on SocketException catch (e) {
+      debugPrint('fetchProductionLotPreview() network error: $e');
+      throw ApiException('No internet connection.');
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      debugPrint('fetchProductionLotPreview() unexpected error: $e');
+      throw ApiException('Unexpected error: $e');
+    }
+  }
+
+  Future<List<ProductionFlowEntry>> fetchProductionFlowEntries({
+    required String stage,
+    int? limit,
+  }) async {
+    final baseUri = Uri.parse('$_baseUrl/api/production-flow/entries');
+    final query = <String, String>{'stage': stage};
+    if (limit != null && limit > 0) {
+      query['limit'] = limit.toString();
+    }
+    final uri = baseUri.replace(queryParameters: query);
+
+    try {
+      final res = await _client
+          .get(uri, headers: _authorizedHeaders())
+          .timeout(const Duration(seconds: 20));
+
+      final status = res.statusCode;
+      final raw = _safeDecodeUtf8(res.bodyBytes);
+      final Map<String, dynamic>? json = _tryParseJson(raw);
+
+      if (status >= 200 && status < 300 && json != null) {
+        final data = json['data'];
+        if (data is Map) {
+          final entries = data[stage];
+          if (entries is Iterable) {
+            return entries
+                .whereType<Map>()
+                .map((e) => ProductionFlowEntry.fromJson(
+                      Map<String, dynamic>.from(e as Map),
+                    ))
+                .toList();
+          }
+        }
+        return const <ProductionFlowEntry>[];
+      }
+
+      final msg = _extractMessage(json, raw) ??
+          'Failed to fetch production entries (status: $status).';
+      debugPrint('fetchProductionFlowEntries() error [$status]: $raw');
+      throw ApiException(msg);
+    } on TimeoutException catch (e) {
+      debugPrint('fetchProductionFlowEntries() timeout: $e');
+      throw ApiException('Request timed out. Check your connection.');
+    } on SocketException catch (e) {
+      debugPrint('fetchProductionFlowEntries() network error: $e');
+      throw ApiException('No internet connection.');
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      debugPrint('fetchProductionFlowEntries() unexpected error: $e');
+      throw ApiException('Unexpected error: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> fetchBundleSummary(String bundleCode) async {
+    final normalized = bundleCode.trim();
+    if (normalized.isEmpty) {
+      throw ApiException('Bundle code is required.');
+    }
+
+    final uri =
+        Uri.parse('$_baseUrl/api/production-flow/bundles/$normalized');
+    try {
+      final res = await _client
+          .get(uri, headers: _authorizedHeaders())
+          .timeout(const Duration(seconds: 20));
+
+      final status = res.statusCode;
+      final raw = _safeDecodeUtf8(res.bodyBytes);
+      final Map<String, dynamic>? json = _tryParseJson(raw);
+
+      if (status >= 200 && status < 300 && json != null) {
+        final bundle = json['bundle'];
+        if (bundle is Map<String, dynamic>) {
+          return bundle;
+        }
+      }
+
+      final msg =
+          _extractMessage(json, raw) ?? 'Failed to fetch bundle (status: $status).';
+      debugPrint('fetchBundleSummary() error [$status]: $raw');
+      throw ApiException(msg);
+    } on TimeoutException catch (e) {
+      debugPrint('fetchBundleSummary() timeout: $e');
+      throw ApiException('Request timed out. Check your connection.');
+    } on SocketException catch (e) {
+      debugPrint('fetchBundleSummary() network error: $e');
+      throw ApiException('No internet connection.');
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      debugPrint('fetchBundleSummary() unexpected error: $e');
       throw ApiException('Unexpected error: $e');
     }
   }
