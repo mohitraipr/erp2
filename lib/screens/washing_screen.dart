@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../providers/providers.dart';
+import '../services/api_client.dart';
 import '../services/api_service.dart';
 import '../state/simple_riverpod.dart';
 
@@ -22,7 +23,6 @@ class _WashingScreenState extends ConsumerState<WashingScreen> {
     super.dispose();
   }
 
-  @override
   @override
   Widget buildWithRef(BuildContext context, WidgetRef ref) {
     return Scaffold(

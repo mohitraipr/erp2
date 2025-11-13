@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/api_lot.dart';
 import '../providers/data_providers.dart';
 import '../providers/providers.dart';
+import '../services/api_client.dart';
 import '../services/api_service.dart';
 import '../widgets/async_value_widget.dart';
 import '../state/simple_riverpod.dart';
@@ -282,7 +283,7 @@ class _LotDetailView extends StatelessWidget {
               child: ExpansionTile(
                 title: Text('Piece codes (${lot.pieces.length})'),
                 children: () {
-                  final tiles = lot.pieces.take(50).map((piece) {
+                  final tiles = lot.pieces.take(50).map<Widget>((piece) {
                     return ListTile(
                       title: Text(piece.pieceCode),
                       subtitle:

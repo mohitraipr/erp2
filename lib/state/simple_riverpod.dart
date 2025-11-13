@@ -59,13 +59,13 @@ class AsyncValue<T> {
 abstract class ProviderListenable<T> {
   const ProviderListenable();
 
-  _ProviderEntry<T> createEntry(_ProviderContainer container);
+  ProviderEntry<T> createEntry(ProviderContainer container);
 }
 
-abstract class _ProviderEntry<T> extends ChangeNotifier {
-  _ProviderEntry(this.container);
+abstract class ProviderEntry<T> extends ChangeNotifier {
+  ProviderEntry(this.container);
 
-  final _ProviderContainer container;
+  final ProviderContainer container;
   final List<VoidCallback> _disposeCallbacks = <VoidCallback>[];
 
   T get value;
@@ -88,16 +88,16 @@ abstract class _ProviderEntry<T> extends ChangeNotifier {
   }
 }
 
-class _ProviderContainer {
-  final Map<ProviderListenable<Object?>, _ProviderEntry<Object?>> _entries = {};
+class ProviderContainer {
+  final Map<ProviderListenable<Object?>, ProviderEntry<Object?>> _entries = {};
 
-  _ProviderEntry<T> _ensureEntry<T>(ProviderListenable<T> provider) {
+  ProviderEntry<T> _ensureEntry<T>(ProviderListenable<T> provider) {
     final existing = _entries[provider];
     if (existing != null) {
-      return existing as _ProviderEntry<T>;
+      return existing as ProviderEntry<T>;
     }
     final entry = provider.createEntry(this);
-    _entries[provider] = entry as _ProviderEntry<Object?>;
+    _entries[provider] = entry as ProviderEntry<Object?>;
     entry.initialize();
     return entry;
   }
@@ -134,7 +134,7 @@ class ProviderScope extends StatefulWidget {
 
   final Widget child;
 
-  static _ProviderContainer of(BuildContext context) {
+  static ProviderContainer of(BuildContext context) {
     final inherited =
         context.dependOnInheritedWidgetOfExactType<_ProviderScopeInherited>();
     if (inherited == null) {
@@ -148,7 +148,7 @@ class ProviderScope extends StatefulWidget {
 }
 
 class _ProviderScopeState extends State<ProviderScope> {
-  late final _ProviderContainer _container = _ProviderContainer();
+  late final ProviderContainer _container = ProviderContainer();
 
   @override
   void dispose() {
@@ -171,7 +171,7 @@ class _ProviderScopeInherited extends InheritedWidget {
     required this.container,
   });
 
-  final _ProviderContainer container;
+  final ProviderContainer container;
 
   @override
   bool updateShouldNotify(_ProviderScopeInherited oldWidget) => false;
@@ -192,11 +192,11 @@ abstract class WidgetRef {
   void onDispose(VoidCallback callback);
 }
 
-class _ContainerRef implements WidgetRef {
-  _ContainerRef(this._container, this._entry);
+class ContainerRef implements WidgetRef {
+  ContainerRef(this._container, this._entry);
 
-  final _ProviderContainer _container;
-  final _ProviderEntry<dynamic> _entry;
+  final ProviderContainer _container;
+  final ProviderEntry<dynamic> _entry;
 
   @override
   void invalidate<T>(ProviderListenable<T> provider) {
@@ -255,7 +255,7 @@ abstract class _ConsumerStateOwner {
 }
 
 class _ConsumerState extends State<_Consumer> implements _ConsumerStateOwner {
-  final Map<_ProviderEntry<dynamic>, VoidCallback> _watchDisposers = {};
+  final Map<ProviderEntry<dynamic>, VoidCallback> _watchDisposers = {};
   final List<VoidCallback> _disposeCallbacks = <VoidCallback>[];
   WidgetRef? _latestRef;
 
@@ -272,7 +272,7 @@ class _ConsumerState extends State<_Consumer> implements _ConsumerStateOwner {
     super.dispose();
   }
 
-  void _registerWatch(_ProviderEntry<dynamic> entry) {
+  void _registerWatch(ProviderEntry<dynamic> entry) {
     if (_watchDisposers.containsKey(entry)) {
       return;
     }
@@ -286,13 +286,13 @@ class _ConsumerState extends State<_Consumer> implements _ConsumerStateOwner {
     _watchDisposers[entry] = () => entry.removeListener(listener);
   }
 
-  void _registerListener(
-    _ProviderEntry<dynamic> entry,
-    void Function(dynamic previous, dynamic next) listener,
+  void _registerListener<T>(
+    ProviderEntry<dynamic> entry,
+    void Function(T? previous, T next) listener,
   ) {
-    dynamic previous = entry.value;
+    T? previous = entry.value as T;
     void handler() {
-      final next = entry.value;
+      final next = entry.value as T;
       listener(previous, next);
       previous = next;
     }
@@ -337,7 +337,7 @@ class _WidgetRefImpl implements WidgetRef {
     required this.state,
   });
 
-  final _ProviderContainer container;
+  final ProviderContainer container;
   final _ConsumerState state;
 
   @override
@@ -349,8 +349,8 @@ class _WidgetRefImpl implements WidgetRef {
   void listen<T>(ProviderListenable<T> provider,
       void Function(T? previous, T next) listener) {
     final entry = container._ensureEntry(provider);
-    state._registerListener(entry, listener);
-    listener(null, entry.value);
+    state._registerListener<T>(entry, listener);
+    listener(null, entry.value as T);
   }
 
   @override
@@ -455,12 +455,12 @@ class Provider<T> extends ProviderListenable<T> {
   final T Function(WidgetRef ref) _create;
 
   @override
-  _ProviderEntry<T> createEntry(_ProviderContainer container) {
+  ProviderEntry<T> createEntry(ProviderContainer container) {
     return _SimpleProviderEntry<T>(container, _create);
   }
 }
 
-class _SimpleProviderEntry<T> extends _ProviderEntry<T> {
+class _SimpleProviderEntry<T> extends ProviderEntry<T> {
   _SimpleProviderEntry(super.container, this._create);
 
   final T Function(WidgetRef ref) _create;
@@ -468,7 +468,7 @@ class _SimpleProviderEntry<T> extends _ProviderEntry<T> {
 
   @override
   void initialize() {
-    final ref = _ContainerRef(container, this);
+    final ref = ContainerRef(container, this);
     _value = _create(ref);
   }
 
@@ -477,7 +477,7 @@ class _SimpleProviderEntry<T> extends _ProviderEntry<T> {
 
   @override
   T refresh() {
-    final ref = _ContainerRef(container, this);
+    final ref = ContainerRef(container, this);
     for (final callback in _disposeCallbacks.reversed) {
       callback();
     }
@@ -536,7 +536,7 @@ class StateNotifierProvider<TNotifier extends StateNotifier<T>, T>
       _StateNotifierControllerProvider<TNotifier, T>(this);
 
   @override
-  _ProviderEntry<T> createEntry(_ProviderContainer container) {
+  ProviderEntry<T> createEntry(ProviderContainer container) {
     return _StateNotifierProviderEntry<TNotifier, T>(container, _create);
   }
 
@@ -544,7 +544,7 @@ class StateNotifierProvider<TNotifier extends StateNotifier<T>, T>
 }
 
 class _StateNotifierProviderEntry<TNotifier extends StateNotifier<T>, T>
-    extends _ProviderEntry<T> {
+    extends ProviderEntry<T> {
   _StateNotifierProviderEntry(super.container, this._create);
 
   final TNotifier Function(WidgetRef ref) _create;
@@ -553,7 +553,7 @@ class _StateNotifierProviderEntry<TNotifier extends StateNotifier<T>, T>
 
   @override
   void initialize() {
-    final ref = _ContainerRef(container, this);
+    final ref = ContainerRef(container, this);
     _notifier = _create(ref);
     _value = _notifier.state;
     _notifier.addListener(_handleNotifierChanged);
@@ -600,7 +600,7 @@ class _StateNotifierControllerProvider<TNotifier extends StateNotifier<T>, T>
   final StateNotifierProvider<TNotifier, T> _parent;
 
   @override
-  _ProviderEntry<TNotifier> createEntry(_ProviderContainer container) {
+  ProviderEntry<TNotifier> createEntry(ProviderContainer container) {
     final parentEntry = container._ensureEntry<T>(_parent)
         as _StateNotifierProviderEntry<TNotifier, T>;
     return _StateNotifierAccessorEntry(parentEntry);
@@ -608,7 +608,7 @@ class _StateNotifierControllerProvider<TNotifier extends StateNotifier<T>, T>
 }
 
 class _StateNotifierAccessorEntry<TNotifier extends StateNotifier<Object?>, T>
-    extends _ProviderEntry<TNotifier> {
+    extends ProviderEntry<TNotifier> {
   _StateNotifierAccessorEntry(this._source)
       : super(_source.container);
 
@@ -624,7 +624,9 @@ class _StateNotifierAccessorEntry<TNotifier extends StateNotifier<Object?>, T>
   TNotifier refresh() => _source.notifier;
 
   @override
-  void disposeEntry() {}
+  void disposeEntry() {
+    super.disposeEntry();
+  }
 }
 
 class FutureProvider<T> extends ProviderListenable<AsyncValue<T>> {
@@ -633,12 +635,18 @@ class FutureProvider<T> extends ProviderListenable<AsyncValue<T>> {
   final Future<T> Function(WidgetRef ref) _create;
 
   @override
-  _ProviderEntry<AsyncValue<T>> createEntry(_ProviderContainer container) {
+  ProviderEntry<AsyncValue<T>> createEntry(ProviderContainer container) {
     return _FutureProviderEntry<T>(container, _create);
+  }
+
+  static FutureProviderFamily<T, Arg> family<T, Arg>(
+    Future<T> Function(WidgetRef ref, Arg arg) create,
+  ) {
+    return FutureProviderFamily<T, Arg>(create);
   }
 }
 
-class _FutureProviderEntry<T> extends _ProviderEntry<AsyncValue<T>> {
+class _FutureProviderEntry<T> extends ProviderEntry<AsyncValue<T>> {
   _FutureProviderEntry(super.container, this._create);
 
   final Future<T> Function(WidgetRef ref) _create;
@@ -655,7 +663,7 @@ class _FutureProviderEntry<T> extends _ProviderEntry<AsyncValue<T>> {
     notifyListeners();
     final completer = Completer<void>();
     _activeRequest = completer;
-    final ref = _ContainerRef(container, this);
+    final ref = ContainerRef(container, this);
     Future<T>(() => _create(ref)).then((value) {
       if (_activeRequest != completer) {
         return;
@@ -690,7 +698,7 @@ class _FutureProviderEntry<T> extends _ProviderEntry<AsyncValue<T>> {
 }
 
 class FutureProviderFamily<T, Arg> {
-  const FutureProviderFamily(this._create);
+  FutureProviderFamily(this._create);
 
   final Future<T> Function(WidgetRef ref, Arg arg) _create;
 

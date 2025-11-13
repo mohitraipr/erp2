@@ -46,7 +46,7 @@ class _ProductionHistoryScreenState
           Padding(
             padding: const EdgeInsets.all(16.0),
             child: DropdownButtonFormField<String?>(
-              value: _stage,
+              initialValue: _stage,
               decoration: const InputDecoration(
                 labelText: 'Stage filter',
               ),

@@ -32,7 +32,6 @@ class _MasterManagementScreenState
   }
 
   @override
-  @override
   Widget buildWithRef(BuildContext context, WidgetRef ref) {
     final mastersAsync = ref.watch(mastersProvider);
 
