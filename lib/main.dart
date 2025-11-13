@@ -1,8 +1,24 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import 'screens/home/role_home.dart';
 import 'screens/login_page.dart';
+import 'services/api_service.dart';
+import 'state/auth_controller.dart';
 
 void main() {
-  runApp(const AuroraLoginApp());
+  final apiService = ApiService();
+  runApp(
+    MultiProvider(
+      providers: [
+        Provider<ApiService>.value(value: apiService),
+        ChangeNotifierProvider<AuthController>(
+          create: (_) => AuthController(apiService),
+        ),
+      ],
+      child: const AuroraLoginApp(),
+    ),
+  );
 }
 
 class AuroraLoginApp extends StatelessWidget {
@@ -100,7 +116,11 @@ class AuroraLoginApp extends StatelessWidget {
           indicatorSize: TabBarIndicatorSize.tab,
         ),
       ),
-      home: const LoginPage(),
+      home: Consumer<AuthController>(
+        builder: (context, auth, _) => auth.isAuthenticated
+            ? const RoleHomePage()
+            : const LoginPage(),
+      ),
     );
   }
 }

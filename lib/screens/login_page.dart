@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
-import '../services/api_service.dart';
-import 'response_page.dart';
+import 'package:provider/provider.dart';
+
+import '../services/api_client.dart';
+import '../state/auth_controller.dart';
+import '../utils/ui_helpers.dart';
+import 'home/role_home.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -12,7 +16,6 @@ class _LoginPageState extends State<LoginPage> {
   final _formKey = GlobalKey<FormState>();
   final _usernameCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
-  final _api = ApiService();
   bool _obscure = true;
   bool _loading = false;
 
@@ -29,29 +32,19 @@ class _LoginPageState extends State<LoginPage> {
 
     setState(() => _loading = true);
     try {
-      // Server expects x-www-form-urlencoded credentials
-      const sendAsForm = true;
-
-      final data = await _api.login(
-        username: _usernameCtrl.text.trim(),
-        password: _passwordCtrl.text,
-        sendAsForm: sendAsForm,
+      final auth = context.read<AuthController>();
+      await auth.login(
+        _usernameCtrl.text.trim(),
+        _passwordCtrl.text,
       );
 
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => ResponsePage(
-            data: data,
-            api: _api,
-          ),
-        ),
+        MaterialPageRoute(builder: (_) => const RoleHomePage()),
       );
     } on ApiException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(e.message)));
+      showErrorSnackBar(context, e);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
