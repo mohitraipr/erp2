@@ -53,6 +53,7 @@ class ApiLotSummary {
     List<ApiLotSize> sizes = const [],
     List<ApiLotBundle> bundles = const [],
     List<ApiLotPiece> pieces = const [],
+    List<LotPatternGroup> patterns = const [],
     LotDownloads? downloads,
     String? remark,
   }) {
@@ -69,6 +70,7 @@ class ApiLotSummary {
       sizes: sizes,
       bundles: bundles,
       pieces: pieces,
+      patterns: patterns,
       downloads: downloads,
       remark: remark,
     );
@@ -91,6 +93,7 @@ class ApiLot extends ApiLotSummary {
   final List<ApiLotSize> sizes;
   final List<ApiLotBundle> bundles;
   final List<ApiLotPiece> pieces;
+  final List<LotPatternGroup> patterns;
   final LotDownloads? downloads;
   final String? remark;
 
@@ -107,6 +110,7 @@ class ApiLot extends ApiLotSummary {
     this.sizes = const [],
     this.bundles = const [],
     this.pieces = const [],
+    this.patterns = const [],
     this.downloads,
     this.remark,
   });
@@ -129,6 +133,12 @@ class ApiLot extends ApiLotSummary {
             .toList() ??
         const [];
 
+    final List<LotPatternGroup> patterns = (json['patterns'] as List?)
+            ?.whereType<Map>()
+            .map((e) => LotPatternGroup.fromJson(Map<String, dynamic>.from(e)))
+            .toList() ??
+        const [];
+
     final downloadsJson = json['downloads'];
     final downloads = downloadsJson is Map<String, dynamic>
         ? LotDownloads.fromJson(downloadsJson)
@@ -138,6 +148,7 @@ class ApiLot extends ApiLotSummary {
       sizes: sizes,
       bundles: bundles,
       pieces: pieces,
+      patterns: patterns,
       downloads: downloads,
       remark: json['remark'] as String?,
     );
@@ -219,6 +230,102 @@ class LotDownloads {
     return LotDownloads(
       bundleCodesUrl: json['bundleCodes'] as String?,
       pieceCodesUrl: json['pieceCodes'] as String?,
+    );
+  }
+}
+
+class LotPatternGroup {
+  const LotPatternGroup({
+    required this.sizeId,
+    required this.sizeLabel,
+    required this.patterns,
+  });
+
+  final int sizeId;
+  final String sizeLabel;
+  final List<LotPattern> patterns;
+
+  factory LotPatternGroup.fromJson(Map<String, dynamic> json) {
+    int parseInt(dynamic value) {
+      if (value is num) return value.toInt();
+      return int.tryParse(value.toString()) ?? 0;
+    }
+
+    return LotPatternGroup(
+      sizeId: parseInt(json['sizeId'] ?? json['size_id'] ?? 0),
+      sizeLabel: (json['sizeLabel'] ?? json['size_label'] ?? '') as String,
+      patterns: (json['patterns'] as List?)
+              ?.whereType<Map>()
+              .map((e) => LotPattern.fromJson(Map<String, dynamic>.from(e)))
+              .toList() ??
+          const [],
+    );
+  }
+}
+
+class LotPattern {
+  const LotPattern({
+    required this.patternId,
+    required this.patternNo,
+    this.piecesTotal,
+    this.bundleCount,
+    this.bundles = const [],
+  });
+
+  final int patternId;
+  final int patternNo;
+  final int? piecesTotal;
+  final int? bundleCount;
+  final List<LotPatternBundle> bundles;
+
+  factory LotPattern.fromJson(Map<String, dynamic> json) {
+    int parseInt(dynamic value) {
+      if (value is num) return value.toInt();
+      return int.tryParse(value.toString()) ?? 0;
+    }
+
+    int? parseIntNullable(dynamic value) {
+      if (value == null) return null;
+      if (value is num) return value.toInt();
+      return int.tryParse(value.toString());
+    }
+
+    return LotPattern(
+      patternId: parseInt(json['patternId'] ?? json['pattern_id'] ?? 0),
+      patternNo: parseInt(json['patternNo'] ?? json['pattern_no'] ?? 0),
+      piecesTotal: parseIntNullable(json['piecesTotal'] ?? json['pieces_total']),
+      bundleCount: parseIntNullable(json['bundleCount'] ?? json['bundle_count']),
+      bundles: (json['bundles'] as List?)
+              ?.whereType<Map>()
+              .map((e) => LotPatternBundle.fromJson(Map<String, dynamic>.from(e)))
+              .toList() ??
+          const [],
+    );
+  }
+}
+
+class LotPatternBundle {
+  const LotPatternBundle({
+    required this.bundleId,
+    required this.bundleCode,
+    this.piecesInBundle,
+  });
+
+  final int bundleId;
+  final String bundleCode;
+  final int? piecesInBundle;
+
+  factory LotPatternBundle.fromJson(Map<String, dynamic> json) {
+    int parseInt(dynamic value) {
+      if (value is num) return value.toInt();
+      return int.tryParse(value.toString()) ?? 0;
+    }
+
+    return LotPatternBundle(
+      bundleId: parseInt(json['bundleId'] ?? json['bundle_id'] ?? 0),
+      bundleCode: (json['bundleCode'] ?? json['bundle_code'] ?? '') as String,
+      piecesInBundle:
+          ApiLotSummary._readInt(json['piecesInBundle'] ?? json['pieces']),
     );
   }
 }
