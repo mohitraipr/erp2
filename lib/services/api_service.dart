@@ -482,6 +482,87 @@ class ApiService {
     }
   }
 
+  Future<List<ProductionFlowEntry>> fetchProductionFlowEntries({
+    String? stage,
+    int? limit,
+  }) async {
+    final queryParameters = <String, String>{};
+    if (stage != null && stage.trim().isNotEmpty) {
+      queryParameters['stage'] = stage.trim();
+    }
+    if (limit != null && limit > 0) {
+      queryParameters['limit'] = limit.toString();
+    }
+
+    final uri = Uri.parse('$_baseUrl/api/production-flow/entries')
+        .replace(queryParameters: queryParameters.isEmpty ? null : queryParameters);
+
+    List<ProductionFlowEntry> _parseEntries(dynamic value) {
+      if (value is Iterable) {
+        return value
+            .whereType<Map>()
+            .map((row) => ProductionFlowEntry.fromJson(row.cast<String, dynamic>()))
+            .toList();
+      }
+      if (value is Iterable<Map<String, dynamic>>) {
+        return value.map(ProductionFlowEntry.fromJson).toList();
+      }
+      return const <ProductionFlowEntry>[];
+    }
+
+    try {
+      final res = await _client
+          .get(uri, headers: _authorizedHeaders())
+          .timeout(const Duration(seconds: 20));
+
+      final status = res.statusCode;
+      final raw = _safeDecodeUtf8(res.bodyBytes);
+      final Map<String, dynamic>? json = _tryParseJson(raw);
+
+      if (status >= 200 && status < 300 && json != null) {
+        final normalizedStage = stage?.trim();
+        final data = json['data'];
+
+        if (data is List) {
+          return _parseEntries(data);
+        }
+
+        if (data is Map) {
+          final map = data.cast<dynamic, dynamic>();
+          if (normalizedStage != null && map.containsKey(normalizedStage)) {
+            return _parseEntries(map[normalizedStage]);
+          }
+
+          final entries = <ProductionFlowEntry>[];
+          for (final value in map.values) {
+            entries.addAll(_parseEntries(value));
+          }
+          return entries;
+        }
+
+        if (json['entries'] is Iterable) {
+          return _parseEntries(json['entries']);
+        }
+      }
+
+      final msg = _extractMessage(json, raw) ??
+          'Failed to fetch production entries (status: $status).';
+      debugPrint('fetchProductionFlowEntries() error [$status]: $raw');
+      throw ApiException(msg);
+    } on TimeoutException catch (e) {
+      debugPrint('fetchProductionFlowEntries() timeout: $e');
+      throw ApiException('Request timed out. Check your connection.');
+    } on SocketException catch (e) {
+      debugPrint('fetchProductionFlowEntries() network error: $e');
+      throw ApiException('No internet connection.');
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      debugPrint('fetchProductionFlowEntries() unexpected error: $e');
+      throw ApiException('Unexpected error: $e');
+    }
+  }
+
   Future<ProductionFlowSubmissionResult> submitProductionFlowEntry({
     String? code,
     String? remark,

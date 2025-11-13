@@ -1,3 +1,5 @@
+import 'dart:collection';
+
 import 'package:flutter/material.dart';
 
 import '../models/login_response.dart';
@@ -164,14 +166,18 @@ class _ProductionFlowPageState extends State<ProductionFlowPage> {
   bool _loadingMasters = false;
   bool _loadingLot = false;
   bool _submitting = false;
+  bool _loadingHistory = false;
 
   String? _masterError;
   String? _lotError;
   String? _submitError;
+  String? _historyError;
+  String? _historyLotFilter;
 
   List<ProductionMaster> _masters = [];
   ProductionLotDetails? _lot;
   ProductionFlowSubmissionResult? _result;
+  List<ProductionFlowEntry> _history = [];
 
   final Map<int, int?> _bundleAssignments = <int, int?>{};
 
@@ -181,6 +187,7 @@ class _ProductionFlowPageState extends State<ProductionFlowPage> {
     if (_stage?.requiresMaster ?? false) {
       _loadMasters();
     }
+    Future.microtask(_loadHistory);
   }
 
   @override
@@ -282,6 +289,42 @@ class _ProductionFlowPageState extends State<ProductionFlowPage> {
     final lot = _lot;
     if (lot == null) return;
     await _loadLot(lotNumber: lot.lotNumber);
+  }
+
+  Future<void> _loadHistory() async {
+    final stage = _stage;
+    if (stage == null) return;
+
+    setState(() {
+      _loadingHistory = true;
+      _historyError = null;
+    });
+
+    try {
+      final entries = await widget.api.fetchProductionFlowEntries(stage: stage.role);
+      if (!mounted) return;
+
+      final lots = LinkedHashSet<String>.from(
+        entries.where((e) => (e.lotNumber ?? '').isNotEmpty).map((e) => e.lotNumber!),
+      );
+
+      setState(() {
+        _history = entries;
+        if (_historyLotFilter != null && !lots.contains(_historyLotFilter)) {
+          _historyLotFilter = null;
+        }
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _historyError = e.message;
+        _history = const [];
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _loadingHistory = false);
+      }
+    }
   }
 
   void _applyMasterToSize(int sizeId, int? masterId) {
@@ -433,6 +476,7 @@ class _ProductionFlowPageState extends State<ProductionFlowPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('${stage.displayName} submission recorded.')),
         );
+        _loadHistory();
       } on ApiException catch (e) {
         if (!mounted) return;
         setState(() => _submitError = e.message);
@@ -480,6 +524,7 @@ class _ProductionFlowPageState extends State<ProductionFlowPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('${stage.displayName} submission recorded.')),
       );
+      _loadHistory();
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() => _submitError = e.message);
@@ -514,32 +559,46 @@ class _ProductionFlowPageState extends State<ProductionFlowPage> {
       );
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('Production • ${stage.displayName}'),
-        actions: [
-          if (stage.requiresMaster)
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text('Production • ${stage.displayName}'),
+          actions: [
+            if (stage.requiresMaster)
+              IconButton(
+                tooltip: 'Refresh masters',
+                icon: const Icon(Icons.groups_outlined),
+                onPressed: _loadingMasters ? null : _loadMasters,
+              ),
+            if (stage.requiresLotDetails)
+              IconButton(
+                tooltip: 'Reload lot',
+                icon: const Icon(Icons.refresh),
+                onPressed: _loadingLot ? null : _reloadCurrentLot,
+              ),
             IconButton(
-              tooltip: 'Refresh masters',
-              icon: const Icon(Icons.groups_outlined),
-              onPressed: _loadingMasters ? null : _loadMasters,
+              tooltip: 'Logout',
+              icon: const Icon(Icons.logout),
+              onPressed: widget.onLogout,
             ),
-          if (stage.requiresLotDetails)
-            IconButton(
-              tooltip: 'Reload lot',
-              icon: const Icon(Icons.refresh),
-              onPressed: _loadingLot ? null : _reloadCurrentLot,
-            ),
-          IconButton(
-            tooltip: 'Logout',
-            icon: const Icon(Icons.logout),
-            onPressed: widget.onLogout,
+          ],
+          bottom: const TabBar(
+            tabs: [
+              Tab(text: 'Submit'),
+              Tab(text: 'History'),
+            ],
           ),
-        ],
+        ),
+        body: TabBarView(
+          children: [
+            stage.requiresLotDetails
+                ? _buildLotAssignmentView(context, stage)
+                : _buildSimpleStageView(context, stage),
+            _buildHistoryTab(stage),
+          ],
+        ),
       ),
-      body: stage.requiresLotDetails
-          ? _buildLotAssignmentView(context, stage)
-          : _buildSimpleStageView(context, stage),
     );
   }
 
@@ -831,6 +890,7 @@ class _ProductionFlowPageState extends State<ProductionFlowPage> {
       0,
       (sum, size) => sum + size.bundles.length,
     );
+    final piecesInfo = lot.totalPieces != null ? ' • Pieces: ${lot.totalPieces}' : '';
 
     return Card(
       child: Padding(
@@ -846,14 +906,243 @@ class _ProductionFlowPageState extends State<ProductionFlowPage> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Sizes: ${lot.sizes.length} • Bundles: $totalBundles'
-              '${lot.totalPieces != null ? ' • Pieces: ${lot.totalPieces}' : ''}',
+              'Sizes: ${lot.sizes.length} • Bundles: $totalBundles$piecesInfo',
               style: theme.textTheme.bodyMedium,
             ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildHistoryTab(ProductionStage stage) {
+    final theme = Theme.of(context);
+    final lots = LinkedHashSet<String>.from(
+      _history.where((e) => (e.lotNumber ?? '').isNotEmpty).map((e) => e.lotNumber!),
+    );
+    final filteredEntries = _historyLotFilter == null
+        ? _history
+        : _history.where((entry) => entry.lotNumber == _historyLotFilter).toList();
+
+    return RefreshIndicator(
+      onRefresh: _loadHistory,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        children: [
+          _buildStageIntroCard(stage),
+          const SizedBox(height: 16),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Recent activity',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Entries recorded for ${stage.displayName.toLowerCase()} stage.',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                  if (lots.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        ChoiceChip(
+                          label: const Text('All lots'),
+                          selected: _historyLotFilter == null,
+                          onSelected: (selected) {
+                            if (selected) {
+                              setState(() => _historyLotFilter = null);
+                            }
+                          },
+                        ),
+                        for (final lot in lots)
+                          ChoiceChip(
+                            label: Text(lot),
+                            selected: _historyLotFilter == lot,
+                            onSelected: (selected) {
+                              setState(() {
+                                _historyLotFilter = selected ? lot : null;
+                              });
+                            },
+                          ),
+                      ],
+                    ),
+                  ],
+                  if (_historyError != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 16),
+                      child: _InfoBanner(
+                        icon: Icons.error_outline,
+                        color: theme.colorScheme.errorContainer,
+                        textColor: theme.colorScheme.onErrorContainer,
+                        message: _historyError!,
+                      ),
+                    ),
+                  if (_loadingHistory && _history.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 24),
+                      child: Center(child: CircularProgressIndicator()),
+                    ),
+                  if (!_loadingHistory && _historyError == null && filteredEntries.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 16),
+                      child: _InfoBanner(
+                        icon: Icons.history,
+                        message: _historyLotFilter == null
+                            ? 'No entries recorded yet. Submissions will appear here.'
+                            : 'No entries found for lot $_historyLotFilter.',
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          for (final entry in filteredEntries)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _buildHistoryEntryCard(entry),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHistoryEntryCard(ProductionFlowEntry entry) {
+    final theme = Theme.of(context);
+    final stageLabel = _formatStageLabel(entry.stage);
+    final statusLabel = entry.eventStatus?.isNotEmpty == true
+        ? entry.eventStatus!
+        : entry.isClosed
+            ? 'Closed'
+            : 'Open';
+    final chips = <Widget>[];
+    if (entry.lotNumber != null && entry.lotNumber!.isNotEmpty) {
+      chips.add(_HistoryChip(label: 'Lot ${entry.lotNumber}'));
+    }
+    if (entry.bundleCode != null && entry.bundleCode!.isNotEmpty) {
+      chips.add(_HistoryChip(label: 'Bundle ${entry.bundleCode}'));
+    }
+    if (entry.pieceCode != null && entry.pieceCode!.isNotEmpty) {
+      chips.add(_HistoryChip(label: 'Piece ${entry.pieceCode}'));
+    }
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(_iconForCodeType(entry.codeType), color: theme.colorScheme.primary),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        entry.codeValue.isNotEmpty ? entry.codeValue : entry.codeType.toUpperCase(),
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '$stageLabel • ${_formatCodeType(entry.codeType)}',
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                Chip(
+                  label: Text(statusLabel),
+                  avatar: Icon(
+                    entry.isClosed ? Icons.check_circle_outline : Icons.timelapse,
+                    size: 18,
+                  ),
+                ),
+              ],
+            ),
+            if (chips.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: chips,
+              ),
+            ],
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Created: ${_formatDateTime(entry.createdAt)}',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    'Closed: ${_formatDateTime(entry.closedAt)}',
+                    style: theme.textTheme.bodySmall,
+                    textAlign: TextAlign.end,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  IconData _iconForCodeType(String codeType) {
+    switch (codeType.toLowerCase()) {
+      case 'bundle':
+        return Icons.inventory_2_outlined;
+      case 'piece':
+        return Icons.qr_code_2;
+      case 'lot':
+        return Icons.widgets_outlined;
+      default:
+        return Icons.receipt_long;
+    }
+  }
+
+  String _formatStageLabel(String stage) {
+    return stage
+        .split(RegExp(r'[_\s]+'))
+        .where((part) => part.isNotEmpty)
+        .map((part) => part[0].toUpperCase() + part.substring(1))
+        .join(' ');
+  }
+
+  String _formatCodeType(String codeType) {
+    if (codeType.isEmpty) return 'Code';
+    return codeType[0].toUpperCase() + codeType.substring(1).toLowerCase();
+  }
+
+  String _formatDateTime(DateTime? value) {
+    if (value == null) {
+      return '—';
+    }
+    final local = value.toLocal();
+    final date = '${local.year.toString().padLeft(4, '0')}-'
+        '${local.month.toString().padLeft(2, '0')}-'
+        '${local.day.toString().padLeft(2, '0')}';
+    final hour = local.hour % 12 == 0 ? 12 : local.hour % 12;
+    final period = local.hour >= 12 ? 'PM' : 'AM';
+    final time = '${hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')} $period';
+    return '$date • $time';
   }
 
   Widget _buildSizeCard(ProductionLotSize size, List<ProductionMaster> masters) {
@@ -1092,6 +1381,32 @@ class _InfoBanner extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HistoryChip extends StatelessWidget {
+  final String label;
+
+  const _HistoryChip({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceVariant,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        child: Text(
+          label,
+          style: theme.textTheme.labelMedium?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
         ),
       ),
     );
