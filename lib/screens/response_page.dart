@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 
@@ -230,6 +231,11 @@ class _ResponsePageState extends State<ResponsePage> {
   String? _mastersError;
   bool _submittingProduction = false;
   Map<String, dynamic>? _productionResponse;
+  Timer? _assignmentLookupTimer;
+  bool _loadingAssignmentLot = false;
+  String? _assignmentLotError;
+  ApiLot? _assignmentSourceLot;
+  String? _loadedAssignmentCode;
 
   bool get _isCuttingMaster {
     final normalizedRole = widget.data.normalizedRole;
@@ -348,6 +354,7 @@ class _ResponsePageState extends State<ResponsePage> {
       _loadRolls();
       _loadMyLots();
     } else if (_stageRequiresMaster) {
+      _flowCodeCtrl.addListener(_onFlowCodeChanged);
       _addAssignmentEntry(notify: false);
       _loadMasters();
     }
@@ -355,6 +362,7 @@ class _ResponsePageState extends State<ResponsePage> {
 
   @override
   void dispose() {
+    _assignmentLookupTimer?.cancel();
     if (_isCuttingMaster) {
       _skuCodeCtrl
         ..removeListener(_updateSkuFromParts)
@@ -382,6 +390,9 @@ class _ResponsePageState extends State<ResponsePage> {
     }
 
     if (_isProductionRole) {
+      if (_stageRequiresMaster) {
+        _flowCodeCtrl.removeListener(_onFlowCodeChanged);
+      }
       _flowCodeCtrl.dispose();
       _flowRemarkCtrl.dispose();
       _flowRejectionCtrl.dispose();
@@ -460,13 +471,30 @@ class _ResponsePageState extends State<ResponsePage> {
     }
   }
 
-  void _addAssignmentEntry({bool notify = true}) {
+  _StageAssignmentEntry _createAssignmentEntry({
+    String? sizeLabel,
+    String? patternText,
+  }) {
     final entry = _StageAssignmentEntry();
     entry.registerListener(() {
       if (mounted) {
         setState(() {});
       }
     });
+
+    if (sizeLabel != null && sizeLabel.isNotEmpty) {
+      entry.sizeCtrl.text = sizeLabel;
+    }
+
+    if (patternText != null && patternText.isNotEmpty) {
+      entry.patternCtrl.text = patternText;
+    }
+
+    return entry;
+  }
+
+  void _addAssignmentEntry({bool notify = true}) {
+    final entry = _createAssignmentEntry();
 
     if (notify) {
       setState(() {
@@ -484,6 +512,166 @@ class _ResponsePageState extends State<ResponsePage> {
     final removed = _assignmentEntries.removeAt(index);
     removed.dispose();
     setState(() {});
+  }
+
+  void _resetAssignmentsForNewLot() {
+    _assignmentLookupTimer?.cancel();
+    _assignmentLookupTimer = null;
+
+    for (final entry in _assignmentEntries) {
+      entry.dispose();
+    }
+
+    final newEntry = _createAssignmentEntry();
+
+    setState(() {
+      _assignmentEntries
+        ..clear()
+        ..add(newEntry);
+      _assignmentSourceLot = null;
+      _assignmentLotError = null;
+      _loadedAssignmentCode = null;
+      _loadingAssignmentLot = false;
+    });
+  }
+
+  Future<void> _lookupLotForAssignments(String code, {bool force = false}) async {
+    final normalized = code.trim();
+    if (normalized.isEmpty) {
+      return;
+    }
+
+    final lotId = _parseLotIdentifier(normalized);
+    if (lotId == null) {
+      if (mounted) {
+        setState(() {
+          _assignmentLotError =
+              'Enter a numeric lot number to load size assignments.';
+          _loadingAssignmentLot = false;
+        });
+      }
+      return;
+    }
+
+    if (!force &&
+        _assignmentLotError == null &&
+        _assignmentSourceLot != null &&
+        _assignmentSourceLot!.id == lotId &&
+        _loadedAssignmentCode == normalized) {
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _loadingAssignmentLot = true;
+        _assignmentLotError = null;
+      });
+    }
+
+    try {
+      final lot = await widget.api.fetchLotDetail(lotId);
+      if (!mounted) return;
+
+      final currentCode = _normalizeCode(_flowCodeCtrl.text);
+      if (currentCode != normalized) {
+        setState(() {
+          _loadingAssignmentLot = false;
+        });
+        return;
+      }
+
+      final entries = _buildAssignmentEntriesFromLot(lot);
+      final hasSizes = entries.isNotEmpty;
+      final fallbackEntry = hasSizes ? null : _createAssignmentEntry();
+
+      setState(() {
+        for (final entry in _assignmentEntries) {
+          entry.dispose();
+        }
+        _assignmentEntries
+          ..clear()
+          ..addAll(hasSizes ? entries : [fallbackEntry!]);
+        _assignmentSourceLot = lot;
+        _loadedAssignmentCode = normalized;
+        _loadingAssignmentLot = false;
+        _assignmentLotError = hasSizes
+            ? null
+            : 'Lot ${lot.lotNumber} has no recorded sizes. Enter assignments manually.';
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _assignmentLotError = e.message;
+        _assignmentSourceLot = null;
+        _loadedAssignmentCode = null;
+        _loadingAssignmentLot = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _assignmentLotError = 'Failed to load lot details. Please try again.';
+        _assignmentSourceLot = null;
+        _loadedAssignmentCode = null;
+        _loadingAssignmentLot = false;
+      });
+    }
+  }
+
+  int? _parseLotIdentifier(String code) {
+    if (code.isEmpty) {
+      return null;
+    }
+
+    final direct = int.tryParse(code);
+    if (direct != null) {
+      return direct;
+    }
+
+    var end = code.length;
+    while (end > 0 && !_isAsciiDigit(code.codeUnitAt(end - 1))) {
+      end -= 1;
+    }
+
+    if (end == 0) {
+      return null;
+    }
+
+    var start = end;
+    while (start > 0 && _isAsciiDigit(code.codeUnitAt(start - 1))) {
+      start -= 1;
+    }
+
+    final digits = code.substring(start, end);
+    return int.tryParse(digits);
+  }
+
+  bool _isAsciiDigit(int codeUnit) => codeUnit >= 48 && codeUnit <= 57;
+
+  List<_StageAssignmentEntry> _buildAssignmentEntriesFromLot(ApiLot lot) {
+    if (lot.sizes.isEmpty) {
+      return <_StageAssignmentEntry>[];
+    }
+
+    return lot.sizes
+        .map(
+          (size) => _createAssignmentEntry(
+            sizeLabel: size.sizeLabel,
+            patternText: _patternTextFromCount(size.patternCount),
+          ),
+        )
+        .toList();
+  }
+
+  String? _patternTextFromCount(int? count) {
+    if (count == null || count <= 0) {
+      return null;
+    }
+
+    if (count == 1) {
+      return '1';
+    }
+
+    return '1-$count';
   }
 
   String _normalizeCode(String input) => input.trim().toUpperCase();
@@ -658,12 +846,6 @@ class _ResponsePageState extends State<ResponsePage> {
     _flowCodeCtrl.clear();
     _flowRemarkCtrl.clear();
     _flowRejectionCtrl.clear();
-
-    if (_stageRequiresMaster) {
-      for (final entry in _assignmentEntries) {
-        entry.clear();
-      }
-    }
 
     setState(() {});
   }
@@ -941,6 +1123,75 @@ class _ResponsePageState extends State<ResponsePage> {
             onRetry: _loadMasters,
           ),
         ],
+        if (_loadingAssignmentLot) ...[
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Loading lot sizes…',
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ),
+            ],
+          ),
+        ],
+        if (!_loadingAssignmentLot && _assignmentLotError != null) ...[
+          const SizedBox(height: 12),
+          _InlineInfoBanner(
+            message: _assignmentLotError!,
+            onRetry: () async {
+              final code = _normalizeCode(_flowCodeCtrl.text);
+              if (code.isEmpty) {
+                _resetAssignmentsForNewLot();
+                return;
+              }
+              await _lookupLotForAssignments(code, force: true);
+            },
+          ),
+        ],
+        if (!_loadingAssignmentLot &&
+            _assignmentLotError == null &&
+            _assignmentSourceLot != null) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: theme.colorScheme.primary.withOpacity(0.2)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.inventory_2_outlined, color: theme.colorScheme.primary),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Loaded ${_assignmentSourceLot!.sizes.length} size${_assignmentSourceLot!.sizes.length == 1 ? '' : 's'} from lot ${_assignmentSourceLot!.lotNumber}. Pattern ranges were pre-filled automatically.',
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    final code = _normalizeCode(_flowCodeCtrl.text);
+                    if (code.isEmpty) {
+                      _resetAssignmentsForNewLot();
+                      return;
+                    }
+                    await _lookupLotForAssignments(code, force: true);
+                  },
+                  child: const Text('Reload'),
+                ),
+              ],
+            ),
+          ),
+        ],
         const SizedBox(height: 16),
         DropdownButtonFormField<UserMaster>(
           decoration: const InputDecoration(labelText: 'Default master (optional)'),
@@ -1134,6 +1385,26 @@ class _ResponsePageState extends State<ResponsePage> {
     if (mounted) {
       setState(() {});
     }
+  }
+
+  void _onFlowCodeChanged() {
+    if (!_stageRequiresMaster) {
+      return;
+    }
+
+    final normalized = _normalizeCode(_flowCodeCtrl.text);
+    _assignmentLookupTimer?.cancel();
+    _assignmentLookupTimer = null;
+
+    if (normalized.isEmpty) {
+      _resetAssignmentsForNewLot();
+      return;
+    }
+
+    _assignmentLookupTimer = Timer(
+      const Duration(milliseconds: 500),
+      () => _lookupLotForAssignments(normalized),
+    );
   }
 
   void _applyLotFilter({bool notify = true}) {
