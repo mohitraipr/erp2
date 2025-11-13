@@ -315,7 +315,7 @@ class _ProductionFlowPageState extends State<ProductionFlowPage> {
 
   List<Map<String, dynamic>> _buildAssignmentPayload() {
     final lot = _lot;
-    if (lot == null) return const [];
+    if (lot == null) return const <Map<String, dynamic>>[];
 
     final Map<_AssignmentKey, List<int>> grouped = {};
 
@@ -345,7 +345,7 @@ class _ProductionFlowPageState extends State<ProductionFlowPage> {
   List<String> _parseRejectedPieces() {
     final raw = _rejectionsCtrl.text.trim();
     if (raw.isEmpty) {
-      return const [];
+      return const <String>[];
     }
 
     final parts = raw.split(RegExp(r'[\s,;]+'));
@@ -372,7 +372,8 @@ class _ProductionFlowPageState extends State<ProductionFlowPage> {
     final stage = _stage;
     if (stage == null) return;
 
-    final rejections = stage.allowsRejection ? _parseRejectedPieces() : const [];
+    final rejections =
+        stage.allowsRejection ? _parseRejectedPieces() : const <String>[];
     final code = _codeCtrl.text.trim();
 
     if (stage.requiresLotDetails) {
