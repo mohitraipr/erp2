@@ -1,9 +1,13 @@
+import 'dart:collection';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/api_lot.dart';
 import '../models/fabric_roll.dart';
 import '../models/filter_options.dart';
 import '../models/login_response.dart';
+import '../models/user_master.dart';
 import '../services/api_service.dart';
 import '../utils/download_helper.dart';
 import 'login_page.dart';
@@ -107,6 +111,38 @@ class SizeEntryData {
   }
 }
 
+class _StageAssignmentEntry {
+  final TextEditingController sizeCtrl = TextEditingController();
+  final TextEditingController patternCtrl = TextEditingController();
+  UserMaster? master;
+  VoidCallback? _listener;
+
+  void registerListener(VoidCallback listener) {
+    _listener = listener;
+    sizeCtrl.addListener(listener);
+    patternCtrl.addListener(listener);
+  }
+
+  void setMaster(UserMaster? value) {
+    master = value;
+    _listener?.call();
+  }
+
+  void clear() {
+    sizeCtrl.clear();
+    patternCtrl.clear();
+  }
+
+  void dispose() {
+    if (_listener != null) {
+      sizeCtrl.removeListener(_listener!);
+      patternCtrl.removeListener(_listener!);
+    }
+    sizeCtrl.dispose();
+    patternCtrl.dispose();
+  }
+}
+
 const List<String> _alphaSizeOptions = [
   'XS',
   'S',
@@ -184,6 +220,17 @@ class _ResponsePageState extends State<ResponsePage> {
   String? _lotsError;
   String? _filtersError;
 
+  final TextEditingController _flowCodeCtrl = TextEditingController();
+  final TextEditingController _flowRemarkCtrl = TextEditingController();
+  final TextEditingController _flowRejectionCtrl = TextEditingController();
+  final List<_StageAssignmentEntry> _assignmentEntries = [];
+  List<UserMaster> _masters = [];
+  UserMaster? _defaultMaster;
+  bool _loadingMasters = false;
+  String? _mastersError;
+  bool _submittingProduction = false;
+  Map<String, dynamic>? _productionResponse;
+
   bool get _isCuttingMaster {
     final normalizedRole = widget.data.normalizedRole;
     if (normalizedRole == 'cutting_manager') {
@@ -192,6 +239,81 @@ class _ResponsePageState extends State<ResponsePage> {
 
     final rawRole = widget.data.role.toLowerCase();
     return normalizedRole.contains('cutting') || rawRole.contains('cutting');
+  }
+
+  static const Set<String> _productionRoles = {
+    'back_pocket',
+    'stitching_master',
+    'jeans_assembly',
+    'washing',
+    'washing_in',
+    'finishing',
+  };
+
+  String get _normalizedRole => widget.data.normalizedRole;
+
+  bool get _isProductionRole => _productionRoles.contains(_normalizedRole);
+
+  bool get _stageRequiresMaster =>
+      _normalizedRole == 'back_pocket' || _normalizedRole == 'stitching_master';
+
+  bool get _stageSupportsRejection =>
+      _normalizedRole == 'jeans_assembly' ||
+      _normalizedRole == 'washing_in' ||
+      _normalizedRole == 'finishing';
+
+  String get _stageTitle {
+    switch (_normalizedRole) {
+      case 'back_pocket':
+        return 'Back Pocket';
+      case 'stitching_master':
+        return 'Stitching Master';
+      case 'jeans_assembly':
+        return 'Jeans Assembly';
+      case 'washing':
+        return 'Washing';
+      case 'washing_in':
+        return 'Washing In';
+      case 'finishing':
+        return 'Finishing';
+      default:
+        return widget.data.role;
+    }
+  }
+
+  String get _codeFieldLabel {
+    switch (_normalizedRole) {
+      case 'washing':
+        return 'Lot number';
+      case 'back_pocket':
+      case 'stitching_master':
+        return 'Lot code';
+      case 'washing_in':
+        return 'Piece code';
+      case 'jeans_assembly':
+      case 'finishing':
+        return 'Bundle code';
+      default:
+        return 'Code';
+    }
+  }
+
+  String? get _codeFieldHint {
+    switch (_normalizedRole) {
+      case 'back_pocket':
+      case 'stitching_master':
+        return 'Enter the lot number to assign bundles to masters.';
+      case 'jeans_assembly':
+        return 'Scan or enter a bundle code to close stitching stages.';
+      case 'washing':
+        return 'Enter the lot number to close jeans assembly pieces.';
+      case 'washing_in':
+        return 'Enter a piece code to move it into washing in.';
+      case 'finishing':
+        return 'Enter a bundle code to close washing in pieces.';
+      default:
+        return null;
+    }
   }
 
   int get _bundleSize => int.tryParse(_bundleSizeCtrl.text.trim()) ?? 0;
@@ -217,36 +339,57 @@ class _ResponsePageState extends State<ResponsePage> {
   @override
   void initState() {
     super.initState();
-    _bundleSizeCtrl.addListener(_onFormChanged);
-    _lotSearchCtrl.addListener(_onSearchFieldChanged);
-    _skuCodeCtrl.addListener(_updateSkuFromParts);
-    _addSizeEntry(notify: false);
-    _loadFilters();
     if (_isCuttingMaster) {
+      _bundleSizeCtrl.addListener(_onFormChanged);
+      _lotSearchCtrl.addListener(_onSearchFieldChanged);
+      _skuCodeCtrl.addListener(_updateSkuFromParts);
+      _addSizeEntry(notify: false);
+      _loadFilters();
       _loadRolls();
       _loadMyLots();
+    } else if (_stageRequiresMaster) {
+      _addAssignmentEntry(notify: false);
+      _loadMasters();
     }
   }
 
   @override
   void dispose() {
-    _skuCodeCtrl
-      ..removeListener(_updateSkuFromParts)
-      ..dispose();
-    _skuCtrl.dispose();
-    _bundleSizeCtrl
-      ..removeListener(_onFormChanged)
-      ..dispose();
-    _remarkCtrl.dispose();
-    _lotSearchCtrl
-      ..removeListener(_onSearchFieldChanged)
-      ..dispose();
-    for (final size in _sizes) {
-      size.dispose();
+    if (_isCuttingMaster) {
+      _skuCodeCtrl
+        ..removeListener(_updateSkuFromParts)
+        ..dispose();
+      _skuCtrl.dispose();
+      _bundleSizeCtrl
+        ..removeListener(_onFormChanged)
+        ..dispose();
+      _remarkCtrl.dispose();
+      _lotSearchCtrl
+        ..removeListener(_onSearchFieldChanged)
+        ..dispose();
+      for (final size in _sizes) {
+        size.dispose();
+      }
+      for (final roll in _selectedRolls) {
+        roll.dispose();
+      }
+    } else {
+      _skuCodeCtrl.dispose();
+      _skuCtrl.dispose();
+      _bundleSizeCtrl.dispose();
+      _remarkCtrl.dispose();
+      _lotSearchCtrl.dispose();
     }
-    for (final roll in _selectedRolls) {
-      roll.dispose();
+
+    if (_isProductionRole) {
+      _flowCodeCtrl.dispose();
+      _flowRemarkCtrl.dispose();
+      _flowRejectionCtrl.dispose();
+      for (final entry in _assignmentEntries) {
+        entry.dispose();
+      }
     }
+
     widget.api.dispose();
     super.dispose();
   }
@@ -270,6 +413,619 @@ class _ResponsePageState extends State<ResponsePage> {
         setState(() => _loadingRolls = false);
       }
     }
+  }
+
+  Future<void> _loadMasters() async {
+    if (!_stageRequiresMaster) {
+      return;
+    }
+
+    setState(() {
+      _loadingMasters = true;
+      _mastersError = null;
+    });
+
+    try {
+      final masters = await widget.api.fetchMasters();
+      if (!mounted) return;
+      setState(() {
+        _masters = masters;
+
+        if (_defaultMaster != null) {
+          final match = masters.firstWhere(
+            (m) => m.id == _defaultMaster!.id,
+            orElse: () => _defaultMaster!,
+          );
+          _defaultMaster = masters.any((m) => m.id == match.id) ? match : null;
+        }
+
+        for (final entry in _assignmentEntries) {
+          if (entry.master != null) {
+            final match = masters.where((m) => m.id == entry.master!.id).toList();
+            entry.master = match.isEmpty ? null : match.first;
+          }
+        }
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _mastersError = e.message;
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingMasters = false;
+        });
+      }
+    }
+  }
+
+  void _addAssignmentEntry({bool notify = true}) {
+    final entry = _StageAssignmentEntry();
+    entry.registerListener(() {
+      if (mounted) {
+        setState(() {});
+      }
+    });
+
+    if (notify) {
+      setState(() {
+        _assignmentEntries.add(entry);
+      });
+    } else {
+      _assignmentEntries.add(entry);
+    }
+  }
+
+  void _removeAssignmentEntry(int index) {
+    if (index < 0 || index >= _assignmentEntries.length) {
+      return;
+    }
+    final removed = _assignmentEntries.removeAt(index);
+    removed.dispose();
+    setState(() {});
+  }
+
+  String _normalizeCode(String input) => input.trim().toUpperCase();
+
+  List<int>? _parsePatternInput(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) {
+      return <int>[];
+    }
+
+    final values = SplayTreeSet<int>();
+    final tokens = trimmed.split(RegExp(r'[\s,]+'));
+    for (final token in tokens) {
+      if (token.isEmpty) continue;
+      if (token.contains('-')) {
+        final parts = token.split('-').where((part) => part.trim().isNotEmpty).toList();
+        if (parts.length != 2) {
+          return null;
+        }
+        final start = int.tryParse(parts[0]);
+        final end = int.tryParse(parts[1]);
+        if (start == null || end == null || start <= 0 || end <= 0 || end < start) {
+          return null;
+        }
+        for (var value = start; value <= end; value++) {
+          values.add(value);
+        }
+      } else {
+        final number = int.tryParse(token);
+        if (number == null || number <= 0) {
+          return null;
+        }
+        values.add(number);
+      }
+    }
+
+    return values.toList();
+  }
+
+  List<String> _parsePieceCodes(String raw) {
+    final cleaned = raw.replaceAll(RegExp(r'[\s\n]+'), ',');
+    final tokens = cleaned.split(',');
+    final set = LinkedHashSet<String>();
+    for (final token in tokens) {
+      final code = _normalizeCode(token);
+      if (code.isNotEmpty) {
+        set.add(code);
+      }
+    }
+    return set.toList();
+  }
+
+  Future<void> _submitProductionEntry() async {
+    if (_submittingProduction) {
+      return;
+    }
+
+    FocusScope.of(context).unfocus();
+
+    final rawCode = _flowCodeCtrl.text;
+    final code = _normalizeCode(rawCode);
+    final remark = _flowRemarkCtrl.text.trim();
+    final rejectedCodes =
+        _stageSupportsRejection ? _parsePieceCodes(_flowRejectionCtrl.text) : <String>[];
+
+    final bool codeProvided = code.isNotEmpty;
+    final bool hasRejections = rejectedCodes.isNotEmpty;
+    final bool codeMandatory = _stageRequiresMaster || !_stageSupportsRejection;
+
+    if (!codeProvided && (codeMandatory || !hasRejections)) {
+      final message = _stageSupportsRejection
+          ? 'Enter ${_codeFieldLabel.toLowerCase()} or at least one rejected piece code.'
+          : 'Please enter ${_codeFieldLabel.toLowerCase()}.';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      return;
+    }
+
+    final assignments = <Map<String, dynamic>>[];
+    if (_stageRequiresMaster) {
+      if (_masters.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please create a master before assigning.')),
+        );
+        return;
+      }
+
+      if (_defaultMaster == null && _assignmentEntries.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Select a default master or add assignments for each size.'),
+          ),
+        );
+        return;
+      }
+
+      for (var i = 0; i < _assignmentEntries.length; i++) {
+        final entry = _assignmentEntries[i];
+        final sizeLabel = entry.sizeCtrl.text.trim();
+        if (sizeLabel.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Size label is required for assignment ${i + 1}.')),
+          );
+          return;
+        }
+
+        final patterns = _parsePatternInput(entry.patternCtrl.text);
+        if (patterns == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Pattern numbers are invalid for ${sizeLabel.toUpperCase()}. Use comma-separated values or ranges.'),
+            ),
+          );
+          return;
+        }
+
+        final master = entry.master ?? _defaultMaster;
+        if (master == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Select a master for ${sizeLabel.toUpperCase()} or choose a default.'),
+            ),
+          );
+          return;
+        }
+
+        assignments.add({
+          'sizeLabel': sizeLabel,
+          'masterId': master.id,
+          if (patterns.isNotEmpty) 'patterns': patterns,
+        });
+      }
+    }
+
+    setState(() {
+      _submittingProduction = true;
+    });
+
+    try {
+      final response = await widget.api.submitProductionEntry(
+        code: codeProvided ? code : null,
+        remark: remark.isEmpty ? null : remark,
+        masterId: _stageRequiresMaster ? _defaultMaster?.id : null,
+        assignments: assignments.isEmpty ? null : assignments,
+        rejectedPieces: hasRejections ? rejectedCodes : null,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _productionResponse = response;
+      });
+
+      final stage = response['stage'] ?? _normalizedRole;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Entry submitted for ${stage.toString()}.')),
+      );
+
+      _resetProductionForm();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _submittingProduction = false;
+        });
+      }
+    }
+  }
+
+  void _resetProductionForm() {
+    _flowCodeCtrl.clear();
+    _flowRemarkCtrl.clear();
+    _flowRejectionCtrl.clear();
+
+    if (_stageRequiresMaster) {
+      for (final entry in _assignmentEntries) {
+        entry.clear();
+      }
+    }
+
+    setState(() {});
+  }
+
+  Widget _buildProductionFlowScaffold(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Aurora Production – $_stageTitle'),
+        actions: [
+          if (_stageRequiresMaster)
+            IconButton(
+              tooltip: 'Reload masters',
+              icon: _loadingMasters
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh),
+              onPressed: _loadingMasters ? null : _loadMasters,
+            ),
+          IconButton(
+            tooltip: 'Logout',
+            icon: const Icon(Icons.logout),
+            onPressed: _logout,
+          ),
+        ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: () async {
+          if (_stageRequiresMaster) {
+            await _loadMasters();
+          }
+        },
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 960),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildStageIntroCard(context),
+                      const SizedBox(height: 16),
+                      _buildProductionFormCard(context),
+                      if (_productionResponse != null) ...[
+                        const SizedBox(height: 16),
+                        _buildProductionResultCard(context),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  List<String> get _stageGuidelines {
+    switch (_normalizedRole) {
+      case 'back_pocket':
+        return [
+          'Enter the lot number to view bundles for back pocket.',
+          'Assign each size to a master. Use pattern numbers (e.g. "1,2" or "1-3") to split bundles between masters.',
+          'A default master can be selected when one person handles all remaining bundles.',
+        ];
+      case 'stitching_master':
+        return [
+          'Enter the lot number produced by back pocket to continue stitching.',
+          'Distribute pattern counts across masters using comma-separated or ranged inputs.',
+          'Each bundle can only be submitted once for this stage.',
+        ];
+      case 'jeans_assembly':
+        return [
+          'Scan or enter a bundle code to close back pocket and stitching submissions.',
+          'Add piece codes to mark them as rejected when necessary.',
+          'Each bundle or piece can only be submitted once in jeans assembly.',
+        ];
+      case 'washing':
+        return [
+          'Enter a lot number to close all open jeans assembly pieces.',
+          'Repeat the submission until the lot’s total pieces are finished.',
+          'A lot cannot be processed for washing more times than its total pieces.',
+        ];
+      case 'washing_in':
+        return [
+          'Enter a piece code to pull it into washing in from washing.',
+          'You may also reject pieces from this screen.',
+          'Every piece can only transition once; rejected pieces stay tracked.',
+        ];
+      case 'finishing':
+        return [
+          'Enter a bundle code to close all washing in pieces for that bundle.',
+          'Optionally list piece codes to reject them during finishing.',
+          'Bundles and pieces should only be submitted once per stage.',
+        ];
+      default:
+        return [
+          'Submit codes for the current production stage and review the server response.',
+        ];
+    }
+  }
+
+  Widget _buildStageIntroCard(BuildContext context) {
+    final theme = Theme.of(context);
+    final guidelines = _stageGuidelines;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '$_stageTitle stage workflow',
+              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Signed in as ${widget.data.username}. Follow the checklist below to keep production records accurate.',
+              style: theme.textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 12),
+            ...guidelines.map(
+              (item) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.only(top: 4),
+                      child: Icon(Icons.check_circle_outline, size: 18),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        item,
+                        style: theme.textTheme.bodyMedium,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProductionFormCard(BuildContext context) {
+    final theme = Theme.of(context);
+    final codeHint = _codeFieldHint;
+    final supportsRejection = _stageSupportsRejection;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Submit production entry',
+              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 16),
+            ValueListenableBuilder<TextEditingValue>(
+              valueListenable: _flowCodeCtrl,
+              builder: (context, value, child) {
+                final hasValue = value.text.trim().isNotEmpty;
+                return TextField(
+                  controller: _flowCodeCtrl,
+                  textCapitalization: TextCapitalization.characters,
+                  decoration: InputDecoration(
+                    labelText: _codeFieldLabel,
+                    hintText: codeHint,
+                    suffixIcon: hasValue
+                        ? IconButton(
+                            tooltip: 'Clear',
+                            icon: const Icon(Icons.clear),
+                            onPressed: _flowCodeCtrl.clear,
+                          )
+                        : null,
+                  ),
+                  onSubmitted: (_) => _submitProductionEntry(),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _flowRemarkCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Remark (optional)',
+                hintText: 'Add notes for this submission',
+              ),
+              maxLines: 2,
+            ),
+            if (_stageRequiresMaster) ...[
+              const SizedBox(height: 24),
+              _buildMasterAssignmentSection(context),
+            ],
+            if (supportsRejection) ...[
+              const SizedBox(height: 24),
+              TextField(
+                controller: _flowRejectionCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Rejected piece codes',
+                  hintText: 'Enter piece codes separated by commas or new lines',
+                ),
+                maxLines: 4,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Rejected codes will change their status for this stage.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+            const SizedBox(height: 24),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton.icon(
+                  icon: const Icon(Icons.undo),
+                  label: const Text('Clear form'),
+                  onPressed: _submittingProduction ? null : _resetProductionForm,
+                ),
+                const SizedBox(width: 12),
+                FilledButton.icon(
+                  icon: _submittingProduction
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.playlist_add_check),
+                  label: Text(_submittingProduction ? 'Submitting…' : 'Submit entry'),
+                  onPressed: _submittingProduction ? null : _submitProductionEntry,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMasterAssignmentSection(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Master assignments',
+          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          _masters.isEmpty
+              ? 'No masters found. Use the master management screen to create them first.'
+              : 'Choose a default master or assign specific sizes below.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        if (_mastersError != null) ...[
+          const SizedBox(height: 12),
+          _InlineInfoBanner(
+            message: _mastersError!,
+            onRetry: _loadMasters,
+          ),
+        ],
+        const SizedBox(height: 16),
+        DropdownButtonFormField<UserMaster>(
+          decoration: const InputDecoration(labelText: 'Default master (optional)'),
+          value: _defaultMaster,
+          items: _masters
+              .map(
+                (m) => DropdownMenuItem<UserMaster>(
+                  value: m,
+                  child: Text(m.name),
+                ),
+              )
+              .toList(),
+          onChanged: (value) {
+            setState(() {
+              _defaultMaster = value;
+            });
+          },
+        ),
+        const SizedBox(height: 16),
+        if (_assignmentEntries.isNotEmpty)
+          ListView.separated(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _assignmentEntries.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 12),
+            itemBuilder: (context, index) {
+              final entry = _assignmentEntries[index];
+              return _AssignmentEntryCard(
+                index: index,
+                entry: entry,
+                masters: _masters,
+                onRemove: _assignmentEntries.length > 1
+                    ? () => _removeAssignmentEntry(index)
+                    : null,
+              );
+            },
+          ),
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            icon: const Icon(Icons.add),
+            label: const Text('Add assignment'),
+            onPressed: _masters.isEmpty ? null : () => _addAssignmentEntry(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildProductionResultCard(BuildContext context) {
+    final theme = Theme.of(context);
+    final encoder = const JsonEncoder.withIndent('  ');
+    final jsonText = encoder.convert(_productionResponse);
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Server response',
+              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceVariant.withOpacity(0.3),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              padding: const EdgeInsets.all(16),
+              child: SelectableText(
+                jsonText,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontFamily: 'monospace',
+                  height: 1.4,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _updateSkuFromParts() {
@@ -619,53 +1375,57 @@ class _ResponsePageState extends State<ResponsePage> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_isCuttingMaster) {
-      return Scaffold(
-        appBar: AppBar(
-          title: const Text('Aurora Workspace'),
-          actions: [
-            IconButton(
-              tooltip: 'Logout',
-              icon: const Icon(Icons.logout),
-              onPressed: _logout,
+    if (_isCuttingMaster) {
+      return DefaultTabController(
+        length: 2,
+        child: Scaffold(
+          appBar: AppBar(
+            title: const Text('Aurora Cutting Master'),
+            actions: [
+              IconButton(
+                tooltip: 'Reload',
+                icon: const Icon(Icons.refresh),
+                onPressed: () {
+                  _loadRolls();
+                  _loadMyLots();
+                },
+              ),
+              IconButton(
+                tooltip: 'Logout',
+                icon: const Icon(Icons.logout),
+                onPressed: _logout,
+              ),
+            ],
+            bottom: const TabBar(
+              tabs: [
+                Tab(text: 'Create lot'),
+                Tab(text: 'My lots'),
+              ],
             ),
-          ],
+          ),
+          body: TabBarView(
+            children: [_buildCreateLotTab(context), _buildMyLotsTab(context)],
+          ),
         ),
-        body: _buildWelcomeCard(context),
       );
     }
 
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Aurora Cutting Master'),
-          actions: [
-            IconButton(
-              tooltip: 'Reload',
-              icon: const Icon(Icons.refresh),
-              onPressed: () {
-                _loadRolls();
-                _loadMyLots();
-              },
-            ),
-            IconButton(
-              tooltip: 'Logout',
-              icon: const Icon(Icons.logout),
-              onPressed: _logout,
-            ),
-          ],
-          bottom: const TabBar(
-            tabs: [
-              Tab(text: 'Create lot'),
-              Tab(text: 'My lots'),
-            ],
+    if (_isProductionRole) {
+      return _buildProductionFlowScaffold(context);
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Aurora Workspace'),
+        actions: [
+          IconButton(
+            tooltip: 'Logout',
+            icon: const Icon(Icons.logout),
+            onPressed: _logout,
           ),
-        ),
-        body: TabBarView(
-          children: [_buildCreateLotTab(context), _buildMyLotsTab(context)],
-        ),
+        ],
       ),
+      body: _buildWelcomeCard(context),
     );
   }
 
@@ -1210,6 +1970,85 @@ class _LotInfoCard extends StatefulWidget {
 
   @override
   State<_LotInfoCard> createState() => _LotInfoCardState();
+}
+
+class _AssignmentEntryCard extends StatelessWidget {
+  final int index;
+  final _StageAssignmentEntry entry;
+  final List<UserMaster> masters;
+  final VoidCallback? onRemove;
+
+  const _AssignmentEntryCard({
+    required this.index,
+    required this.entry,
+    required this.masters,
+    this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceVariant.withOpacity(0.25),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: theme.colorScheme.primary.withOpacity(0.15)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Assignment ${index + 1}',
+                  style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+                ),
+              ),
+              if (onRemove != null)
+                IconButton(
+                  tooltip: 'Remove assignment',
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: onRemove,
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: entry.sizeCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Size label',
+              hintText: 'Example: S, M, 32',
+            ),
+            textCapitalization: TextCapitalization.characters,
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: entry.patternCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Pattern numbers (optional)',
+              hintText: 'Comma separated or ranges, e.g. 1,2 or 1-3',
+            ),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<UserMaster>(
+            decoration: const InputDecoration(labelText: 'Master'),
+            value: entry.master,
+            items: masters
+                .map(
+                  (m) => DropdownMenuItem<UserMaster>(
+                    value: m,
+                    child: Text(m.name),
+                  ),
+                )
+                .toList(),
+            onChanged: (value) => entry.setMaster(value),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _LotInfoCardState extends State<_LotInfoCard> {
