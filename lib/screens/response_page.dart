@@ -7,6 +7,7 @@ import '../models/login_response.dart';
 import '../services/api_service.dart';
 import '../utils/download_helper.dart';
 import 'login_page.dart';
+import 'production_flow_page.dart';
 
 class ResponsePage extends StatefulWidget {
   static const routeName = '/response';
@@ -152,6 +153,10 @@ const List<String> _allSizeOptions = [
 ];
 
 class _ResponsePageState extends State<ResponsePage> {
+  late final String _normalizedRole;
+  late final bool _isCuttingMasterRole;
+  late final bool _isProductionRole;
+
   final GlobalKey<FormState> _lotFormKey = GlobalKey<FormState>();
   final TextEditingController _skuCtrl = TextEditingController();
   final TextEditingController _bundleSizeCtrl = TextEditingController(
@@ -184,15 +189,7 @@ class _ResponsePageState extends State<ResponsePage> {
   String? _lotsError;
   String? _filtersError;
 
-  bool get _isCuttingMaster {
-    final normalizedRole = widget.data.normalizedRole;
-    if (normalizedRole == 'cutting_manager') {
-      return true;
-    }
-
-    final rawRole = widget.data.role.toLowerCase();
-    return normalizedRole.contains('cutting') || rawRole.contains('cutting');
-  }
+  bool get _isCuttingMaster => _isCuttingMasterRole;
 
   int get _bundleSize => int.tryParse(_bundleSizeCtrl.text.trim()) ?? 0;
 
@@ -217,12 +214,23 @@ class _ResponsePageState extends State<ResponsePage> {
   @override
   void initState() {
     super.initState();
-    _bundleSizeCtrl.addListener(_onFormChanged);
-    _lotSearchCtrl.addListener(_onSearchFieldChanged);
-    _skuCodeCtrl.addListener(_updateSkuFromParts);
-    _addSizeEntry(notify: false);
-    _loadFilters();
+    _normalizedRole = widget.data.normalizedRole;
+    _isCuttingMasterRole = _determineIsCuttingMaster(_normalizedRole, widget.data.role);
+    _isProductionRole = const {
+      'back_pocket',
+      'stitching_master',
+      'jeans_assembly',
+      'washing',
+      'washing_in',
+      'finishing',
+    }.contains(_normalizedRole);
+
     if (_isCuttingMaster) {
+      _bundleSizeCtrl.addListener(_onFormChanged);
+      _lotSearchCtrl.addListener(_onSearchFieldChanged);
+      _skuCodeCtrl.addListener(_updateSkuFromParts);
+      _addSizeEntry(notify: false);
+      _loadFilters();
       _loadRolls();
       _loadMyLots();
     }
@@ -234,13 +242,18 @@ class _ResponsePageState extends State<ResponsePage> {
       ..removeListener(_updateSkuFromParts)
       ..dispose();
     _skuCtrl.dispose();
-    _bundleSizeCtrl
-      ..removeListener(_onFormChanged)
-      ..dispose();
+    if (_isCuttingMaster) {
+      _bundleSizeCtrl
+        ..removeListener(_onFormChanged)
+        ..dispose();
+      _lotSearchCtrl
+        ..removeListener(_onSearchFieldChanged)
+        ..dispose();
+    } else {
+      _bundleSizeCtrl.dispose();
+      _lotSearchCtrl.dispose();
+    }
     _remarkCtrl.dispose();
-    _lotSearchCtrl
-      ..removeListener(_onSearchFieldChanged)
-      ..dispose();
     for (final size in _sizes) {
       size.dispose();
     }
@@ -619,6 +632,14 @@ class _ResponsePageState extends State<ResponsePage> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isProductionRole) {
+      return ProductionFlowPage(
+        data: widget.data,
+        api: widget.api,
+        onLogout: _logout,
+      );
+    }
+
     if (!_isCuttingMaster) {
       return Scaffold(
         appBar: AppBar(
@@ -667,6 +688,14 @@ class _ResponsePageState extends State<ResponsePage> {
         ),
       ),
     );
+  }
+
+  bool _determineIsCuttingMaster(String normalizedRole, String rawRole) {
+    if (normalizedRole == 'cutting_manager' || normalizedRole == 'cutting_master') {
+      return true;
+    }
+    final lowered = rawRole.toLowerCase();
+    return normalizedRole.contains('cutting') || lowered.contains('cutting');
   }
 
   Widget _buildWelcomeCard(BuildContext context) {
