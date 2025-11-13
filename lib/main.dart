@@ -1,15 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import 'providers/providers.dart';
 import 'screens/login_page.dart';
+import 'screens/role_home.dart';
 
 void main() {
-  runApp(const AuroraLoginApp());
+  runApp(const ProviderScope(child: AuroraErpApp()));
 }
 
-class AuroraLoginApp extends StatelessWidget {
-  const AuroraLoginApp({super.key});
+class AuroraErpApp extends ConsumerWidget {
+  const AuroraErpApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final baseTheme = ThemeData(
       colorScheme: ColorScheme.fromSeed(
         seedColor: const Color(0xFF3F37C9),
@@ -24,6 +28,15 @@ class AuroraLoginApp extends StatelessWidget {
       bodyColor: const Color(0xFF1F2933),
       displayColor: const Color(0xFF0B132B),
     );
+
+    ref.listen<AuthState>(authControllerProvider, (previous, next) {
+      if (next.errorMessage != null && next.errorMessage!.isNotEmpty) {
+        final messenger = ScaffoldMessenger.maybeOf(context);
+        messenger?.showSnackBar(
+          SnackBar(content: Text(next.errorMessage!)),
+        );
+      }
+    });
 
     return MaterialApp(
       title: 'Aurora ERP',
@@ -100,7 +113,20 @@ class AuroraLoginApp extends StatelessWidget {
           indicatorSize: TabBarIndicatorSize.tab,
         ),
       ),
-      home: const LoginPage(),
+      home: const _AuthGate(),
     );
+  }
+}
+
+class _AuthGate extends ConsumerWidget {
+  const _AuthGate();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final authState = ref.watch(authControllerProvider);
+    if (authState.isAuthenticated && authState.role != null) {
+      return RoleHome(role: authState.role!, user: authState.user!);
+    }
+    return const LoginPage();
   }
 }
