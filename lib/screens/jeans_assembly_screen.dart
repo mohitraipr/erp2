@@ -4,6 +4,7 @@ import '../models/master.dart';
 import '../models/production_flow.dart';
 import '../providers/data_providers.dart';
 import '../providers/providers.dart';
+import '../services/api_client.dart';
 import '../services/api_service.dart';
 import '../state/simple_riverpod.dart';
 
@@ -29,7 +30,6 @@ class _JeansAssemblyScreenState extends ConsumerState<JeansAssemblyScreen> {
     super.dispose();
   }
 
-  @override
   @override
   Widget buildWithRef(BuildContext context, WidgetRef ref) {
     final mastersAsync = ref.watch(mastersProvider);
@@ -83,7 +83,7 @@ class _JeansAssemblyScreenState extends ConsumerState<JeansAssemblyScreen> {
             mastersAsync.when(
               data: (masters) {
                 return DropdownButtonFormField<MasterRecord>(
-                  value: _selectedMaster,
+                  initialValue: _selectedMaster,
                   items: masters
                       .map((master) => DropdownMenuItem(
                             value: master,
@@ -144,6 +144,7 @@ class _JeansAssemblyScreenState extends ConsumerState<JeansAssemblyScreen> {
         ref,
         (repo) => repo.getBundleByCode(code),
       );
+      if (!mounted) return;
       setState(() {
         _bundleInfo = bundle;
       });

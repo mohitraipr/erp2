@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/fabric_roll.dart';
 import '../providers/data_providers.dart';
 import '../providers/providers.dart';
+import '../services/api_client.dart';
 import '../services/api_service.dart';
 import '../widgets/async_value_widget.dart';
 import 'lot_detail_screen.dart';
@@ -48,7 +49,6 @@ class _CuttingManagerCreateLotScreenState
     super.dispose();
   }
 
-  @override
   @override
   Widget buildWithRef(BuildContext context, WidgetRef ref) {
     final fabricRollsAsync = ref.watch(fabricRollsProvider);
@@ -97,7 +97,7 @@ class _CuttingManagerCreateLotScreenState
                           ),
                           const SizedBox(height: 16),
                           DropdownButtonFormField<String>(
-                            value: _selectedFabric,
+                            initialValue: _selectedFabric,
                             decoration: const InputDecoration(
                               labelText: 'Fabric type',
                             ),
@@ -300,7 +300,7 @@ class _CuttingManagerCreateLotScreenState
                         Expanded(
                           flex: 2,
                           child: DropdownButtonFormField<String>(
-                            value: _rolls[index].rollController.text.isEmpty
+                            initialValue: _rolls[index].rollController.text.isEmpty
                                 ? null
                                 : _rolls[index].rollController.text,
                             items: rollNumbers

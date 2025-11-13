@@ -4,6 +4,7 @@ import '../models/api_lot.dart';
 import '../models/master.dart';
 import '../providers/data_providers.dart';
 import '../providers/providers.dart';
+import '../services/api_client.dart';
 import '../services/api_service.dart';
 import '../state/simple_riverpod.dart';
 
@@ -28,7 +29,6 @@ class _PatternAssignmentScreenState
     super.dispose();
   }
 
-  @override
   @override
   Widget buildWithRef(BuildContext context, WidgetRef ref) {
     final mastersAsync = ref.watch(mastersProvider);
@@ -134,7 +134,7 @@ class _PatternAssignmentScreenState
                             ),
                           );
                         },
-                      ).toList(),
+                      ),
                       const SizedBox(height: 16),
                       SizedBox(
                         width: double.infinity,
@@ -184,11 +184,13 @@ class _PatternAssignmentScreenState
       );
       final lotDetail =
           await performApiCall(ref, (repo) => repo.getLotDetail(match.id));
+      if (!mounted) return;
       setState(() {
         _lot = lotDetail;
         _assignments.clear();
       });
     } on ApiException catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(e.message)),
       );
@@ -279,7 +281,7 @@ class _PatternAssignmentChip extends StatelessWidget {
     return SizedBox(
       width: 220,
       child: DropdownButtonFormField<int>(
-        value: selectedMasterId,
+        initialValue: selectedMasterId,
         decoration: InputDecoration(
           labelText: 'Pattern $patternNo',
         ),

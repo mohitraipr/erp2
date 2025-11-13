@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/production_flow.dart';
 import '../providers/providers.dart';
-import '../services/api_service.dart';
+import '../services/api_client.dart';
 import '../state/simple_riverpod.dart';
 
 class BundleLookupScreen extends ConsumerStatefulWidget {
@@ -23,7 +23,6 @@ class _BundleLookupScreenState extends ConsumerState<BundleLookupScreen> {
     super.dispose();
   }
 
-  @override
   @override
   Widget buildWithRef(BuildContext context, WidgetRef ref) {
     return Scaffold(
@@ -104,6 +103,7 @@ class _BundleLookupScreenState extends ConsumerState<BundleLookupScreen> {
         ref,
         (repo) => repo.getBundleByCode(code),
       );
+      if (!mounted) return;
       setState(() {
         _bundle = bundle;
       });
