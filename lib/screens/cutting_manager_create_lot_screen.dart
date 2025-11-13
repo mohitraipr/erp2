@@ -419,7 +419,7 @@ class _CuttingManagerCreateLotScreenState
 
     try {
       final lot = await performApiCall(ref, (repo) => repo.createLot(payload));
-      if (!mounted) return;
+      if (!context.mounted) return;
       await showDialog<void>(
         context: context,
         builder: (context) => AlertDialog(
@@ -448,6 +448,7 @@ class _CuttingManagerCreateLotScreenState
           ],
         ),
       );
+      if (!context.mounted) return;
       _formKey.currentState!.reset();
       ref.invalidate(lotsProvider);
       setState(() {
@@ -473,7 +474,7 @@ class _CuttingManagerCreateLotScreenState
           );
       });
     } on ApiException catch (e) {
-      if (!mounted) return;
+      if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(e.message)),
       );
