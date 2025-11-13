@@ -4,6 +4,13 @@ const { pool } = require('../config/db');
 const { isAuthenticated, allowRoles } = require('../middlewares/auth');
 const generateApiLotNumber = require('../utils/generateApiLotNumber');
 
+const GENDERS = ['men', 'women', 'ladies', 'girls', 'boys'];
+const CATEGORIES = ['jeans', 'skirt', 'denimjacket'];
+const MASTER_CREATOR_ROLES = ['back_pocket', 'jeans_assembly', 'stitching_master'];
+const MASTER_NAME_MAX_LENGTH = 255;
+const MASTER_PHONE_MAX_LENGTH = 20;
+const MASTER_NOTES_MAX_LENGTH = 255;
+
 // Simple in-memory cache for rolls to avoid repeated DB reads
 let rollsCache = { data: null, expires: 0 };
 
@@ -26,21 +33,6 @@ function buildCsv(rows, columns) {
   return [header, ...dataLines].join('\n');
 }
 
-function extractLotId(req) {
-  const paramValue =
-    req.params?.lotId ??
-    req.params?.lotid ??
-    req.params?.lotID ??
-    req.params?.LotId ??
-    req.params?.LOTID;
-
-  const lotId = Number(paramValue);
-  if (!Number.isInteger(lotId) || lotId <= 0) {
-    return null;
-  }
-  return lotId;
-}
-
 async function fetchLotIfAuthorized(req, res, lotId) {
   const user = req.session?.user;
   if (!user) {
@@ -50,9 +42,14 @@ async function fetchLotIfAuthorized(req, res, lotId) {
 
   try {
     const [[lot]] = await pool.query(
-      `SELECT id, lot_number AS lotNumber, cutting_master_id AS cuttingMasterId, sku, fabric_type AS fabricType, total_pieces AS totalPieces
-       FROM api_lots
-       WHERE id = ?`,
+      `SELECT id,
+              lot_number AS lotNumber,
+              cutting_master_id AS cuttingMasterId,
+              sku,
+              fabric_type AS fabricType,
+              total_pieces AS totalPieces
+         FROM api_lots
+        WHERE id = ?`,
       [lotId],
     );
 
@@ -130,9 +127,64 @@ router.get(
   }
 );
 
+router.get('/filters', isAuthenticated, allowRoles(['cutting_manager']), (req, res) => {
+  res.json({
+    genders: GENDERS,
+    categories: CATEGORIES,
+  });
+});
+
+router.get(
+  '/lots',
+  isAuthenticated,
+  allowRoles(['cutting_manager']),
+  async (req, res) => {
+    const user = req.session?.user;
+
+    if (!user?.id) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    try {
+      const [lots] = await pool.query(
+        `SELECT
+           id,
+           lot_number AS lotNumber,
+           cutting_master_id AS cuttingMasterId,
+           sku,
+           fabric_type AS fabricType,
+           remark,
+           bundle_size AS bundleSize,
+           total_bundles AS totalBundles,
+           total_pieces AS totalPieces,
+           total_weight AS totalWeight,
+           created_at AS createdAt,
+           updated_at AS updatedAt
+         FROM api_lots
+         WHERE cutting_master_id = ?
+         ORDER BY created_at DESC`,
+        [user.id],
+      );
+
+      const response = lots.map((lot) => ({
+        ...lot,
+        downloads: {
+          bundleCodes: `/api/lots/${lot.id}/bundles/download`,
+          pieceCodes: `/api/lots/${lot.id}/pieces/download`,
+        },
+      }));
+
+      return res.json(response);
+    } catch (error) {
+      console.error('Error fetching lots for cutting manager:', error);
+      return res.status(500).json({ error: 'Failed to fetch lots.' });
+    }
+  },
+);
+
 router.get('/lots/:lotId', isAuthenticated, async (req, res) => {
-  const lotId = extractLotId(req);
-  if (!lotId) {
+  const lotId = Number(req.params.lotId);
+  if (!Number.isInteger(lotId) || lotId <= 0) {
     return res.status(400).json({ error: 'Invalid lot id.' });
   }
 
@@ -154,8 +206,8 @@ router.get('/lots/:lotId', isAuthenticated, async (req, res) => {
 });
 
 router.get('/lots/:lotId/bundles/download', isAuthenticated, async (req, res) => {
-  const lotId = extractLotId(req);
-  if (!lotId) {
+  const lotId = Number(req.params.lotId);
+  if (!Number.isInteger(lotId) || lotId <= 0) {
     return res.status(400).json({ error: 'Invalid lot id.' });
   }
 
@@ -198,8 +250,8 @@ router.get('/lots/:lotId/bundles/download', isAuthenticated, async (req, res) =>
 });
 
 router.get('/lots/:lotId/pieces/download', isAuthenticated, async (req, res) => {
-  const lotId = extractLotId(req);
-  if (!lotId) {
+  const lotId = Number(req.params.lotId);
+  if (!Number.isInteger(lotId) || lotId <= 0) {
     return res.status(400).json({ error: 'Invalid lot id.' });
   }
 
@@ -492,7 +544,7 @@ router.post(
           }
 
           const piecesInBundle = Math.min(numericBundleSize, remainingPieces);
-          const bundleCode = String(bundleSequence).padStart(6, '0');
+          const bundleCode = `${lotNumber}b${bundleSequence}`;
 
           const [bundleResult] = await conn.query(
             `
@@ -524,7 +576,7 @@ router.post(
                 'Piece code limit exceeded. Please reduce total pieces for this lot.',
               );
             }
-            const pieceCode = String(pieceSequence).padStart(8, '0');
+            const pieceCode = `${lotNumber}p${pieceSequence}`;
             pieceRows.push([lotId, bundleId, sizeId, pieceSequence, index, pieceCode]);
             pieceOutputs.push({
               pieceCode,
@@ -598,4 +650,141 @@ router.post(
   },
 );
 
+router.get(
+  '/masters',
+  isAuthenticated,
+  allowRoles(MASTER_CREATOR_ROLES),
+  async (req, res) => {
+    const userId = req.session?.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    try {
+      const [masters] = await pool.query(
+        `SELECT
+           id,
+           master_name AS masterName,
+           contact_number AS contactNumber,
+           notes,
+           creator_role AS creatorRole,
+           created_at AS createdAt,
+           updated_at AS updatedAt
+         FROM user_masters
+         WHERE creator_user_id = ?
+         ORDER BY created_at DESC`,
+        [userId],
+      );
+
+      return res.json(masters);
+    } catch (error) {
+      console.error('Error fetching user masters:', error);
+      return res.status(500).json({ error: 'Failed to fetch masters.' });
+    }
+  },
+);
+
+router.post(
+  '/masters',
+  isAuthenticated,
+  allowRoles(MASTER_CREATOR_ROLES),
+  async (req, res) => {
+    const user = req.session?.user;
+
+    if (!user?.id) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const payload = req.body || {};
+    const {
+      name,
+      contactNumber,
+      phone,
+      phoneNumber,
+      notes,
+      description,
+      masterName: bodyMasterName,
+      fullName,
+      contact,
+      mobile,
+      remarks,
+      note,
+    } = payload;
+
+    const rawName = name ?? bodyMasterName ?? fullName;
+    const masterName = typeof rawName === 'string' ? rawName.trim() : '';
+
+    if (!masterName) {
+      return res.status(400).json({ error: 'Master name is required.' });
+    }
+
+    if (masterName.length > MASTER_NAME_MAX_LENGTH) {
+      return res.status(400).json({
+        error: `Master name must be at most ${MASTER_NAME_MAX_LENGTH} characters long.`,
+      });
+    }
+
+    const rawContact = contactNumber ?? phone ?? phoneNumber ?? contact ?? mobile;
+    const contactValue = typeof rawContact === 'string' ? rawContact.trim() : '';
+    if (contactValue && contactValue.length > MASTER_PHONE_MAX_LENGTH) {
+      return res.status(400).json({
+        error: `Contact number must be at most ${MASTER_PHONE_MAX_LENGTH} characters long.`,
+      });
+    }
+
+    const rawNotes = notes ?? description ?? remarks ?? note;
+    const noteValue = typeof rawNotes === 'string' ? rawNotes.trim() : '';
+    if (noteValue && noteValue.length > MASTER_NOTES_MAX_LENGTH) {
+      return res.status(400).json({
+        error: `Notes must be at most ${MASTER_NOTES_MAX_LENGTH} characters long.`,
+      });
+    }
+
+    try {
+      const [[existing]] = await pool.query(
+        `SELECT id FROM user_masters WHERE creator_user_id = ? AND master_name = ?`,
+        [user.id, masterName],
+      );
+
+      if (existing) {
+        return res.status(409).json({
+          error: 'A master with this name already exists for the current user.',
+        });
+      }
+
+      const [result] = await pool.query(
+        `INSERT INTO user_masters
+          (creator_user_id, creator_role, master_name, contact_number, notes)
+         VALUES (?, ?, ?, ?, ?)`,
+        [user.id, user.roleName, masterName, contactValue || null, noteValue || null],
+      );
+
+      const insertId = result.insertId;
+      const [[createdMaster]] = await pool.query(
+        `SELECT
+           id,
+           master_name AS masterName,
+           contact_number AS contactNumber,
+           notes,
+           creator_role AS creatorRole,
+           created_at AS createdAt,
+           updated_at AS updatedAt
+         FROM user_masters
+         WHERE id = ?`,
+        [insertId],
+      );
+
+      return res.status(201).json({
+        message: 'Master created successfully.',
+        master: createdMaster,
+      });
+    } catch (error) {
+      console.error('Error creating user master:', error);
+      return res.status(500).json({ error: 'Failed to create master.' });
+    }
+  },
+);
+
 module.exports = router;
+
