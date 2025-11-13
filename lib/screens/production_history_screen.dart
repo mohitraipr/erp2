@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/production_flow.dart';
 import '../providers/data_providers.dart';
 import '../widgets/async_value_widget.dart';
+import '../state/simple_riverpod.dart';
 
 class ProductionHistoryScreen extends ConsumerStatefulWidget {
   const ProductionHistoryScreen({super.key});
@@ -27,7 +27,8 @@ class _ProductionHistoryScreenState
   };
 
   @override
-  Widget build(BuildContext context) {
+  @override
+  Widget buildWithRef(BuildContext context, WidgetRef ref) {
     final historyAsync = ref.watch(productionHistoryProvider(_stage));
 
     return Scaffold(

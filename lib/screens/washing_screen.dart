@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/providers.dart';
 import '../services/api_service.dart';
+import '../state/simple_riverpod.dart';
 
 class WashingScreen extends ConsumerStatefulWidget {
   const WashingScreen({super.key});
@@ -23,7 +23,8 @@ class _WashingScreenState extends ConsumerState<WashingScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  @override
+  Widget buildWithRef(BuildContext context, WidgetRef ref) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Washing registration'),

@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/providers.dart';
 import '../services/api_service.dart';
+import '../state/simple_riverpod.dart';
 
 class WashingInScreen extends ConsumerStatefulWidget {
   const WashingInScreen({super.key});
@@ -28,7 +28,8 @@ class _WashingInScreenState extends ConsumerState<WashingInScreen>
   }
 
   @override
-  Widget build(BuildContext context) {
+  @override
+  Widget buildWithRef(BuildContext context, WidgetRef ref) {
     return DefaultTabController(
       length: 2,
       child: Scaffold(

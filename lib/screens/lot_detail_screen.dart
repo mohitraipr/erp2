@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/api_lot.dart';
 import '../providers/data_providers.dart';
 import '../providers/providers.dart';
 import '../services/api_service.dart';
 import '../widgets/async_value_widget.dart';
+import '../state/simple_riverpod.dart';
 
 class LotDetailScreen extends ConsumerWidget {
   const LotDetailScreen({
@@ -20,7 +20,7 @@ class LotDetailScreen extends ConsumerWidget {
   final bool canDownload;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget buildWithRef(BuildContext context, WidgetRef ref) {
     final lotAsync = ref.watch(lotDetailProvider(lotId));
 
     return Scaffold(

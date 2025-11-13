@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import 'state/simple_riverpod.dart';
 
 import 'providers/providers.dart';
 import 'screens/login_page.dart';
@@ -13,7 +14,7 @@ class AuroraErpApp extends ConsumerWidget {
   const AuroraErpApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget buildWithRef(BuildContext context, WidgetRef ref) {
     final baseTheme = ThemeData(
       colorScheme: ColorScheme.fromSeed(
         seedColor: const Color(0xFF3F37C9),
@@ -96,12 +97,16 @@ class AuroraErpApp extends ConsumerWidget {
           style: OutlinedButton.styleFrom(
             padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            side: BorderSide(color: baseTheme.colorScheme.primary.withOpacity(0.4)),
+            side: BorderSide(
+              color: baseTheme.colorScheme.primary.withValues(alpha: 0.4),
+            ),
           ),
         ),
         chipTheme: baseTheme.chipTheme.copyWith(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          side: BorderSide(color: baseTheme.colorScheme.primary.withOpacity(0.15)),
+          side: BorderSide(
+            color: baseTheme.colorScheme.primary.withValues(alpha: 0.15),
+          ),
         ),
         snackBarTheme: baseTheme.snackBarTheme.copyWith(
           behavior: SnackBarBehavior.floating,
@@ -122,7 +127,7 @@ class _AuthGate extends ConsumerWidget {
   const _AuthGate();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget buildWithRef(BuildContext context, WidgetRef ref) {
     final authState = ref.watch(authControllerProvider);
     if (authState.isAuthenticated && authState.role != null) {
       return RoleHome(role: authState.role!, user: authState.user!);

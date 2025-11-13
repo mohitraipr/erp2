@@ -30,7 +30,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_riverpod: ^2.5.1
   dio: ^5.7.0
   dio_cookie_manager: ^2.0.0
   cookie_jar: ^4.0.6

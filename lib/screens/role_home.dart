@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/user.dart';
 import '../providers/providers.dart';
@@ -13,6 +12,7 @@ import 'pattern_assignment_screen.dart';
 import 'production_history_screen.dart';
 import 'washing_in_screen.dart';
 import 'washing_screen.dart';
+import '../state/simple_riverpod.dart';
 
 class RoleHome extends ConsumerStatefulWidget {
   const RoleHome({super.key, required this.role, required this.user});
@@ -45,7 +45,8 @@ class _RoleHomeState extends ConsumerState<RoleHome>
   }
 
   @override
-  Widget build(BuildContext context) {
+  @override
+  Widget buildWithRef(BuildContext context, WidgetRef ref) {
     return DefaultTabController(
       length: _tabs.length,
       child: Builder(

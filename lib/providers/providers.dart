@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../state/simple_riverpod.dart';
 
 import '../config/app_config.dart';
 import '../models/user.dart';
