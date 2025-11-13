@@ -257,7 +257,6 @@ abstract class _ConsumerStateOwner {
 class _ConsumerState extends State<_Consumer> implements _ConsumerStateOwner {
   final Map<ProviderEntry<dynamic>, VoidCallback> _watchDisposers = {};
   final List<VoidCallback> _disposeCallbacks = <VoidCallback>[];
-  WidgetRef? _latestRef;
 
   @override
   void dispose() {
@@ -287,12 +286,12 @@ class _ConsumerState extends State<_Consumer> implements _ConsumerStateOwner {
   }
 
   void _registerListener<T>(
-    ProviderEntry<dynamic> entry,
+    ProviderEntry<T> entry,
     void Function(T? previous, T next) listener,
   ) {
-    T? previous = entry.value as T;
+    T? previous = entry.value;
     void handler() {
-      final next = entry.value as T;
+      final next = entry.value;
       listener(previous, next);
       previous = next;
     }
@@ -308,7 +307,6 @@ class _ConsumerState extends State<_Consumer> implements _ConsumerStateOwner {
       container: container,
       state: this,
     );
-    _latestRef = ref;
     widget.owner?.updateRef(ref);
     return widget.builder(context, ref);
   }
@@ -326,9 +324,7 @@ class _ConsumerState extends State<_Consumer> implements _ConsumerStateOwner {
   }
 
   @override
-  void updateRef(WidgetRef ref) {
-    _latestRef = ref;
-  }
+  void updateRef(WidgetRef ref) {}
 }
 
 class _WidgetRefImpl implements WidgetRef {
@@ -348,9 +344,9 @@ class _WidgetRefImpl implements WidgetRef {
   @override
   void listen<T>(ProviderListenable<T> provider,
       void Function(T? previous, T next) listener) {
-    final entry = container._ensureEntry(provider);
+    final entry = container._ensureEntry<T>(provider);
     state._registerListener<T>(entry, listener);
-    listener(null, entry.value as T);
+    listener(null, entry.value);
   }
 
   @override
@@ -607,7 +603,7 @@ class _StateNotifierControllerProvider<TNotifier extends StateNotifier<T>, T>
   }
 }
 
-class _StateNotifierAccessorEntry<TNotifier extends StateNotifier<Object?>, T>
+class _StateNotifierAccessorEntry<TNotifier extends StateNotifier<T>, T>
     extends ProviderEntry<TNotifier> {
   _StateNotifierAccessorEntry(this._source)
       : super(_source.container);
@@ -623,10 +619,6 @@ class _StateNotifierAccessorEntry<TNotifier extends StateNotifier<Object?>, T>
   @override
   TNotifier refresh() => _source.notifier;
 
-  @override
-  void disposeEntry() {
-    super.disposeEntry();
-  }
 }
 
 class FutureProvider<T> extends ProviderListenable<AsyncValue<T>> {
@@ -650,7 +642,7 @@ class _FutureProviderEntry<T> extends ProviderEntry<AsyncValue<T>> {
   _FutureProviderEntry(super.container, this._create);
 
   final Future<T> Function(WidgetRef ref) _create;
-  AsyncValue<T> _state = const AsyncValue.loading();
+  AsyncValue<T> _state = AsyncValue<T>.loading();
   Completer<void>? _activeRequest;
 
   @override
@@ -659,7 +651,7 @@ class _FutureProviderEntry<T> extends ProviderEntry<AsyncValue<T>> {
   }
 
   void _fetch() {
-    _state = const AsyncValue<T>.loading();
+    _state = AsyncValue<T>.loading();
     notifyListeners();
     final completer = Completer<void>();
     _activeRequest = completer;

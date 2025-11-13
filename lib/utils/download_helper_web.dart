@@ -6,7 +6,7 @@ import 'package:web/web.dart' as web;
 Future<bool> saveCsvToDevice(String filename, String content) async {
   final bytes = Uint8List.fromList(utf8.encode(content));
   final blob = web.Blob(
-    <Object>[bytes.buffer],
+    (<Object>[bytes.buffer]) as dynamic,
     web.BlobPropertyBag(type: 'text/csv'),
   );
   final url = web.URL.createObjectURL(blob);
