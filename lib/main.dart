@@ -123,6 +123,10 @@ class AuroraErpApp extends ConsumerWidget {
   }
 }
 
+class AuroraLoginApp extends AuroraErpApp {
+  const AuroraLoginApp({super.key});
+}
+
 class _AuthGate extends ConsumerWidget {
   const _AuthGate();
 

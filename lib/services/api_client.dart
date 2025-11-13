@@ -14,13 +14,11 @@ class ApiException implements Exception {
 }
 
 class UnauthorizedException extends ApiException {
-  UnauthorizedException(String message)
-      : super(message, statusCode: 401);
+  UnauthorizedException(super.message) : super(statusCode: 401);
 }
 
 class ConflictException extends ApiException {
-  ConflictException(String message)
-      : super(message, statusCode: 409);
+  ConflictException(super.message) : super(statusCode: 409);
 }
 
 class ApiClient {

@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:http/http.dart' as http;
+
 import '../models/api_lot.dart';
 import '../models/fabric_roll.dart';
 import '../models/filter_options.dart';
@@ -8,6 +10,205 @@ import '../models/production_flow.dart';
 import '../models/user.dart';
 import '../utils/download_helper.dart';
 import 'api_client.dart';
+
+class ApiService {
+  ApiService({http.Client? client, String? baseUrl})
+      : _client = client ?? http.Client(),
+        _ownsClient = client == null,
+        _baseUri = _normalizeBase(baseUrl);
+
+  final http.Client _client;
+  final bool _ownsClient;
+  final Uri _baseUri;
+
+  static Uri _normalizeBase(String? baseUrl) {
+    if (baseUrl == null || baseUrl.trim().isEmpty) {
+      return Uri.parse('http://localhost');
+    }
+
+    final trimmed = baseUrl.trim();
+    final parsed = Uri.parse(trimmed);
+    if (parsed.hasScheme) {
+      return parsed;
+    }
+    return Uri.parse('https://$trimmed');
+  }
+
+  Map<String, String> get _defaultHeaders => const {
+        'Accept': 'application/json, text/plain, */*',
+      };
+
+  Uri _buildUri(String path, [Map<String, dynamic>? query]) {
+    final normalizedPath = path.startsWith('/') ? path : '/$path';
+    final resolved = _baseUri.resolve(normalizedPath);
+    if (query == null || query.isEmpty) {
+      return resolved;
+    }
+    final filteredQuery = <String, String>{};
+    query.forEach((key, value) {
+      if (value == null) return;
+      filteredQuery[key] = value.toString();
+    });
+    return resolved.replace(
+      queryParameters: {
+        ...resolved.queryParameters,
+        ...filteredQuery,
+      },
+    );
+  }
+
+  Future<List<ApiLotSummary>> fetchMyLots() async {
+    final fallbacks = <String>['/api/lots', '/api/my-lots'];
+    ApiException? lastError;
+    http.Response? lastResponse;
+
+    for (final path in fallbacks) {
+      final response = await _client.get(
+        _buildUri(path),
+        headers: _defaultHeaders,
+      );
+      lastResponse = response;
+
+      if (response.statusCode == 404) {
+        continue;
+      }
+      final payload = _decodeBody(response.body);
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return _extractLots(payload);
+      }
+
+      final message =
+          _messageFromPayload(payload) ?? 'Failed to fetch lots from server';
+      lastError = ApiException(message, statusCode: response.statusCode);
+    }
+
+    if (lastError != null) {
+      throw lastError;
+    }
+    throw ApiException(
+      'Lots endpoint not found',
+      statusCode: lastResponse?.statusCode ?? 404,
+    );
+  }
+
+  Future<FilterOptions> fetchFilters() async {
+    final response = await _client.get(
+      _buildUri('/api/filters'),
+      headers: _defaultHeaders,
+    );
+    final payload = _decodeBody(response.body);
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      if (payload is Map<String, dynamic>) {
+        return FilterOptions.fromJson(payload);
+      }
+      if (payload is Map) {
+        final normalized = <String, dynamic>{};
+        payload.forEach((key, value) {
+          normalized[key.toString()] = value;
+        });
+        return FilterOptions.fromJson(normalized);
+      }
+      return const FilterOptions(genders: [], categories: []);
+    }
+
+    final message =
+        _messageFromPayload(payload) ?? 'Failed to fetch filter options';
+    throw ApiException(message, statusCode: response.statusCode);
+  }
+
+  void close() {
+    if (_ownsClient) {
+      _client.close();
+    }
+  }
+
+  dynamic _decodeBody(String body) {
+    if (body.isEmpty) return null;
+    try {
+      return jsonDecode(body);
+    } on FormatException {
+      return body;
+    }
+  }
+
+  List<ApiLotSummary> _extractLots(dynamic payload) {
+    if (payload == null) return const [];
+    final results = <ApiLotSummary>[];
+    final seen = <String>{};
+
+    void addLot(Map<dynamic, dynamic> candidate) {
+      final normalized = <String, dynamic>{};
+      candidate.forEach((key, dynamic entryValue) {
+        normalized[key.toString()] = entryValue;
+      });
+      final lot = ApiLotSummary.fromJson(normalized);
+      final fingerprint = '${lot.lotNumber}#${lot.id}';
+      if (lot.lotNumber.isEmpty || !seen.add(fingerprint)) {
+        return;
+      }
+      results.add(lot);
+    }
+
+    void walk(dynamic value) {
+      if (value is List) {
+        for (final element in value) {
+          walk(element);
+        }
+      } else if (value is Map) {
+        final mapValue = value.cast<dynamic, dynamic>();
+        final hasLotFields = mapValue.containsKey('lotNumber') ||
+            mapValue.containsKey('lot_number') ||
+            mapValue.containsKey('lotNo') ||
+            mapValue.containsKey('lot_no');
+
+        if (hasLotFields) {
+          addLot(mapValue);
+        } else {
+          for (final element in mapValue.values) {
+            walk(element);
+          }
+        }
+      }
+    }
+
+    walk(payload);
+    return results;
+  }
+
+  String? _messageFromPayload(dynamic payload) {
+    if (payload == null) return null;
+    if (payload is String) {
+      final text = payload.trim();
+      if (text.isEmpty) return null;
+      if (text.length > 240) return null;
+      return text;
+    }
+    if (payload is Map) {
+      const keys = ['message', 'error', 'detail', 'msg', 'reason'];
+      for (final key in keys) {
+        final value = payload[key];
+        if (value is String && value.trim().isNotEmpty) {
+          return value;
+        }
+        if (value is Map && value['message'] is String) {
+          return value['message'] as String;
+        }
+        if (value is List && value.isNotEmpty) {
+          final first = value.first;
+          if (first is String && first.trim().isNotEmpty) {
+            return first;
+          }
+          if (first is Map && first['message'] is String) {
+            return first['message'] as String;
+          }
+        }
+      }
+    }
+    return null;
+  }
+}
 
 class LotCreationPayload {
   LotCreationPayload({
@@ -120,7 +321,7 @@ class ErpRepository {
   Future<Map<String, List<FabricRoll>>> getFabricRolls() async {
     final response = await _client.get('/api/fabric-rolls');
     if (response is Map) {
-      final rawMap = (response as Map).cast<dynamic, dynamic>();
+      final rawMap = response.cast<dynamic, dynamic>();
       final result = <String, List<FabricRoll>>{};
       for (final entry in rawMap.entries) {
         final key = entry.key.toString();
@@ -175,7 +376,7 @@ class ErpRepository {
             walk(element);
           }
         } else if (value is Map) {
-          final mapValue = (value as Map).cast<dynamic, dynamic>();
+          final mapValue = value.cast<dynamic, dynamic>();
           if (mapValue.containsKey('lotNumber') ||
               mapValue.containsKey('lot_number')) {
             final mapped = Map<String, dynamic>.fromEntries(
