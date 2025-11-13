@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../services/api_client.dart';
 import '../state/session_state.dart';
 
 class LoginPage extends StatefulWidget {
@@ -300,7 +301,7 @@ class _HighlightChip extends StatelessWidget {
     return Chip(
       avatar: Icon(icon, size: 18, color: theme.colorScheme.primary),
       label: Text(label),
-      backgroundColor: theme.colorScheme.primary.withOpacity(0.08),
+      backgroundColor: theme.colorScheme.primary.withValues(alpha: 0.08),
     );
   }
 }
