@@ -53,6 +53,7 @@ class ApiLotSummary {
     List<ApiLotSize> sizes = const [],
     List<ApiLotBundle> bundles = const [],
     List<ApiLotPiece> pieces = const [],
+    List<ApiLotPatternGroup> patterns = const [],
     LotDownloads? downloads,
     String? remark,
   }) {
@@ -69,6 +70,7 @@ class ApiLotSummary {
       sizes: sizes,
       bundles: bundles,
       pieces: pieces,
+      patterns: patterns,
       downloads: downloads,
       remark: remark,
     );
@@ -93,6 +95,7 @@ class ApiLot extends ApiLotSummary {
   final List<ApiLotPiece> pieces;
   final LotDownloads? downloads;
   final String? remark;
+  final List<ApiLotPatternGroup> patterns;
 
   ApiLot({
     required super.id,
@@ -109,6 +112,7 @@ class ApiLot extends ApiLotSummary {
     this.pieces = const [],
     this.downloads,
     this.remark,
+    this.patterns = const [],
   });
 
   factory ApiLot.fromJson(Map<String, dynamic> json) {
@@ -128,6 +132,12 @@ class ApiLot extends ApiLotSummary {
             .map((e) => ApiLotPiece.fromJson(Map<String, dynamic>.from(e)))
             .toList() ??
         const [];
+    final List<ApiLotPatternGroup> patterns = (json['patterns'] as List?)
+            ?.whereType<Map>()
+            .map((e) =>
+                ApiLotPatternGroup.fromJson(Map<String, dynamic>.from(e)))
+            .toList() ??
+        const [];
 
     final downloadsJson = json['downloads'];
     final downloads = downloadsJson is Map<String, dynamic>
@@ -138,6 +148,7 @@ class ApiLot extends ApiLotSummary {
       sizes: sizes,
       bundles: bundles,
       pieces: pieces,
+      patterns: patterns,
       downloads: downloads,
       remark: json['remark'] as String?,
     );
@@ -171,11 +182,19 @@ class ApiLotBundle {
   final String bundleCode;
   final String sizeLabel;
   final int? piecesInBundle;
+  final int? bundleId;
+  final int? patternId;
+  final int? patternNo;
+  final int? bundleSequence;
 
   ApiLotBundle({
     required this.bundleCode,
     required this.sizeLabel,
     this.piecesInBundle,
+    this.bundleId,
+    this.patternId,
+    this.patternNo,
+    this.bundleSequence,
   });
 
   factory ApiLotBundle.fromJson(Map<String, dynamic> json) {
@@ -185,6 +204,13 @@ class ApiLotBundle {
       piecesInBundle: ApiLotSummary._readInt(
         json['pieces'] ?? json['piecesInBundle'] ?? json['pieces_in_bundle'],
       ),
+      bundleId: ApiLotSummary._readInt(json['bundleId'] ?? json['bundle_id']),
+      patternId:
+          ApiLotSummary._readInt(json['patternId'] ?? json['pattern_id']),
+      patternNo:
+          ApiLotSummary._readInt(json['patternNo'] ?? json['pattern_no']),
+      bundleSequence: ApiLotSummary._readInt(
+          json['bundleSequence'] ?? json['bundle_sequence']),
     );
   }
 }
@@ -193,11 +219,17 @@ class ApiLotPiece {
   final String pieceCode;
   final String bundleCode;
   final String sizeLabel;
+  final int? patternId;
+  final int? patternNo;
+  final int? bundleId;
 
   ApiLotPiece({
     required this.pieceCode,
     required this.bundleCode,
     required this.sizeLabel,
+    this.patternId,
+    this.patternNo,
+    this.bundleId,
   });
 
   factory ApiLotPiece.fromJson(Map<String, dynamic> json) {
@@ -205,6 +237,11 @@ class ApiLotPiece {
       pieceCode: (json['pieceCode'] ?? json['piece_code'] ?? '') as String,
       bundleCode: (json['bundleCode'] ?? json['bundle_code'] ?? '') as String,
       sizeLabel: (json['sizeLabel'] ?? json['size_label'] ?? '') as String,
+      patternId:
+          ApiLotSummary._readInt(json['patternId'] ?? json['pattern_id']),
+      patternNo:
+          ApiLotSummary._readInt(json['patternNo'] ?? json['pattern_no']),
+      bundleId: ApiLotSummary._readInt(json['bundleId'] ?? json['bundle_id']),
     );
   }
 }
@@ -219,6 +256,89 @@ class LotDownloads {
     return LotDownloads(
       bundleCodesUrl: json['bundleCodes'] as String?,
       pieceCodesUrl: json['pieceCodes'] as String?,
+    );
+  }
+}
+
+class ApiLotPatternGroup {
+  final int? sizeId;
+  final String sizeLabel;
+  final List<ApiLotPattern> patterns;
+
+  const ApiLotPatternGroup({
+    this.sizeId,
+    required this.sizeLabel,
+    this.patterns = const [],
+  });
+
+  factory ApiLotPatternGroup.fromJson(Map<String, dynamic> json) {
+    final sizeId = ApiLotSummary._readInt(json['sizeId'] ?? json['size_id']);
+    final sizeLabel =
+        (json['sizeLabel'] ?? json['size_label'] ?? '') as String? ?? '';
+    final patterns = (json['patterns'] as List?)
+            ?.whereType<Map>()
+            .map((e) => ApiLotPattern.fromJson(Map<String, dynamic>.from(e)))
+            .toList() ??
+        const <ApiLotPattern>[];
+
+    return ApiLotPatternGroup(
+      sizeId: sizeId,
+      sizeLabel: sizeLabel,
+      patterns: patterns,
+    );
+  }
+}
+
+class ApiLotPattern {
+  final int? patternId;
+  final int? patternNo;
+  final int? piecesTotal;
+  final int? bundleCount;
+  final List<ApiLotPatternBundle> bundles;
+
+  const ApiLotPattern({
+    this.patternId,
+    this.patternNo,
+    this.piecesTotal,
+    this.bundleCount,
+    this.bundles = const [],
+  });
+
+  factory ApiLotPattern.fromJson(Map<String, dynamic> json) {
+    final bundles = (json['bundles'] as List?)
+            ?.whereType<Map>()
+            .map((e) =>
+                ApiLotPatternBundle.fromJson(Map<String, dynamic>.from(e)))
+            .toList() ??
+        const <ApiLotPatternBundle>[];
+
+    return ApiLotPattern(
+      patternId:
+          ApiLotSummary._readInt(json['patternId'] ?? json['pattern_id']),
+      patternNo:
+          ApiLotSummary._readInt(json['patternNo'] ?? json['pattern_no']),
+      piecesTotal:
+          ApiLotSummary._readInt(json['piecesTotal'] ?? json['pieces_total']),
+      bundleCount: ApiLotSummary._readInt(
+          json['bundleCount'] ?? json['bundle_count']),
+      bundles: bundles,
+    );
+  }
+}
+
+class ApiLotPatternBundle {
+  final int? bundleId;
+  final String? bundleCode;
+  final int? piecesInBundle;
+
+  const ApiLotPatternBundle({this.bundleId, this.bundleCode, this.piecesInBundle});
+
+  factory ApiLotPatternBundle.fromJson(Map<String, dynamic> json) {
+    return ApiLotPatternBundle(
+      bundleId: ApiLotSummary._readInt(json['bundleId'] ?? json['bundle_id']),
+      bundleCode: json['bundleCode'] as String?,
+      piecesInBundle: ApiLotSummary._readInt(
+          json['piecesInBundle'] ?? json['pieces_in_bundle'] ?? json['pieces']),
     );
   }
 }

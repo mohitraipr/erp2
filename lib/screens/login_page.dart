@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
-import '../services/api_service.dart';
-import 'response_page.dart';
+import 'package:provider/provider.dart';
+
+import '../state/session_state.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -12,14 +13,22 @@ class _LoginPageState extends State<LoginPage> {
   final _formKey = GlobalKey<FormState>();
   final _usernameCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
-  final _api = ApiService();
+  late final TextEditingController _baseUrlCtrl;
   bool _obscure = true;
   bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final session = context.read<SessionController>();
+    _baseUrlCtrl = TextEditingController(text: session.baseUrl);
+  }
 
   @override
   void dispose() {
     _usernameCtrl.dispose();
     _passwordCtrl.dispose();
+    _baseUrlCtrl.dispose();
     super.dispose();
   }
 
@@ -28,30 +37,18 @@ class _LoginPageState extends State<LoginPage> {
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _loading = true);
+    final session = context.read<SessionController>();
+    session.setBaseUrl(_baseUrlCtrl.text.trim());
     try {
-      // Server expects x-www-form-urlencoded credentials
-      const sendAsForm = true;
-
-      final data = await _api.login(
-        username: _usernameCtrl.text.trim(),
-        password: _passwordCtrl.text,
-        sendAsForm: sendAsForm,
-      );
-
-      if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => ResponsePage(
-            data: data,
-            api: _api,
-          ),
-        ),
+      await session.login(
+        _usernameCtrl.text.trim(),
+        _passwordCtrl.text,
       );
     } on ApiException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(e.message)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -59,6 +56,10 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
+    final session = context.watch<SessionController>();
+    if (_baseUrlCtrl.text.trim() != session.baseUrl) {
+      _baseUrlCtrl.text = session.baseUrl;
+    }
     final theme = Theme.of(context);
     final subtitleStyle = theme.textTheme.bodyMedium?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
@@ -153,6 +154,27 @@ class _LoginPageState extends State<LoginPage> {
             style: subtitleStyle,
           ),
           const SizedBox(height: 24),
+          TextFormField(
+            controller: _baseUrlCtrl,
+            textInputAction: TextInputAction.next,
+            decoration: const InputDecoration(
+              labelText: 'Backend URL',
+              prefixIcon: Icon(Icons.link_outlined),
+              helperText: 'Include protocol, e.g. https://api.example.com',
+            ),
+            validator: (value) {
+              final trimmed = value?.trim() ?? '';
+              if (trimmed.isEmpty) {
+                return 'Please provide the backend base URL';
+              }
+              final uri = Uri.tryParse(trimmed);
+              if (uri == null || (!uri.isScheme('http') && !uri.isScheme('https'))) {
+                return 'Enter a valid http or https URL';
+              }
+              return null;
+            },
+          ),
+          spacing,
           TextFormField(
             controller: _usernameCtrl,
             textInputAction: TextInputAction.next,
