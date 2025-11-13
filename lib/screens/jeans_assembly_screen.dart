@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/master.dart';
 import '../models/production_flow.dart';
 import '../providers/data_providers.dart';
 import '../providers/providers.dart';
 import '../services/api_service.dart';
+import '../state/simple_riverpod.dart';
 
 class JeansAssemblyScreen extends ConsumerStatefulWidget {
   const JeansAssemblyScreen({super.key});
@@ -30,7 +30,8 @@ class _JeansAssemblyScreenState extends ConsumerState<JeansAssemblyScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  @override
+  Widget buildWithRef(BuildContext context, WidgetRef ref) {
     final mastersAsync = ref.watch(mastersProvider);
 
     return Scaffold(

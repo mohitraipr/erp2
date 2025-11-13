@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/master.dart';
 import '../providers/data_providers.dart';
@@ -7,6 +6,7 @@ import '../providers/providers.dart';
 import '../services/api_client.dart';
 import '../services/api_service.dart';
 import '../widgets/async_value_widget.dart';
+import '../state/simple_riverpod.dart';
 
 class MasterManagementScreen extends ConsumerStatefulWidget {
   const MasterManagementScreen({super.key});
@@ -32,7 +32,8 @@ class _MasterManagementScreenState
   }
 
   @override
-  Widget build(BuildContext context) {
+  @override
+  Widget buildWithRef(BuildContext context, WidgetRef ref) {
     final mastersAsync = ref.watch(mastersProvider);
 
     return Scaffold(

@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/production_flow.dart';
 import '../providers/providers.dart';
 import '../services/api_service.dart';
+import '../state/simple_riverpod.dart';
 
 class BundleLookupScreen extends ConsumerStatefulWidget {
   const BundleLookupScreen({super.key});
@@ -24,7 +24,8 @@ class _BundleLookupScreenState extends ConsumerState<BundleLookupScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  @override
+  Widget buildWithRef(BuildContext context, WidgetRef ref) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Bundle lookup'),

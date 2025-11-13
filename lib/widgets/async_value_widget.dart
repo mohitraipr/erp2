@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../state/simple_riverpod.dart';
 
 class AsyncValueWidget<T> extends StatelessWidget {
   const AsyncValueWidget({

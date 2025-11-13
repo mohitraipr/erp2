@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/fabric_roll.dart';
 import '../providers/data_providers.dart';
@@ -7,6 +6,7 @@ import '../providers/providers.dart';
 import '../services/api_service.dart';
 import '../widgets/async_value_widget.dart';
 import 'lot_detail_screen.dart';
+import '../state/simple_riverpod.dart';
 
 class CuttingManagerCreateLotScreen extends ConsumerStatefulWidget {
   const CuttingManagerCreateLotScreen({super.key});
@@ -49,7 +49,8 @@ class _CuttingManagerCreateLotScreenState
   }
 
   @override
-  Widget build(BuildContext context) {
+  @override
+  Widget buildWithRef(BuildContext context, WidgetRef ref) {
     final fabricRollsAsync = ref.watch(fabricRollsProvider);
 
     return Scaffold(

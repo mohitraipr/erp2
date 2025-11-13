@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/master.dart';
 import '../providers/data_providers.dart';
 import '../providers/providers.dart';
 import '../services/api_service.dart';
+import '../state/simple_riverpod.dart';
 
 class FinishingScreen extends ConsumerStatefulWidget {
   const FinishingScreen({super.key});
@@ -28,7 +28,8 @@ class _FinishingScreenState extends ConsumerState<FinishingScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  @override
+  Widget buildWithRef(BuildContext context, WidgetRef ref) {
     final mastersAsync = ref.watch(mastersProvider);
 
     return Scaffold(
