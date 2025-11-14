@@ -6,13 +6,14 @@ class LoginResponse {
   const LoginResponse({this.userId, required this.username, required this.role});
 
   factory LoginResponse.fromJson(Map<String, dynamic> json) {
-    final String? rawRole = (json['role'] ?? json['roleName']) as String?;
     return LoginResponse(
-      userId: json['id'] is num ? (json['id'] as num).toInt() : json['userId'] as int?,
+      userId: json['id'] is num
+          ? (json['id'] as num).toInt()
+          : json['userId'] is num
+              ? (json['userId'] as num).toInt()
+              : null,
       username: (json['username'] ?? json['name'] ?? '') as String,
-      role: rawRole ?? 'user',
+      role: (json['role'] ?? json['roleName'] ?? 'user') as String,
     );
   }
-
-  String get normalizedRole => role.toLowerCase().replaceAll(' ', '_');
 }
