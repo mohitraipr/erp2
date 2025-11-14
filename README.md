@@ -1,20 +1,13 @@
-<<<<<<< HEAD
-
-=======
 # aurora_login_app
 
-A new Flutter project.
+Simple Flutter login screen that posts credentials to the Aurora backend and displays
+the response payload.
 
 ## Getting Started
 
-This project is a starting point for a Flutter application.
+1. Update the `_baseUrl` in `lib/services/api_service.dart` if your API lives elsewhere.
+2. Run the app with `flutter run`.
+3. Enter credentials and tap **Sign in**.
 
-A few resources to get you started if this is your first Flutter project:
-
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
->>>>>>> b007706 (Initial commit: Flutter app)
+On success the app navigates to a response screen showing the returned username, role,
+and optional user id.
